@@ -1,0 +1,12 @@
+# Core dependencies
+pymodbus>=3.0.0
+pynput>=1.7.6
+python-osc>=1.8.0
+numpy>=1.24.0
+
+# Video and timing
+opencv-python>=4.8.0
+python-timecode>=1.4.0
+
+# Utilities
+PyYAML>=6.0
