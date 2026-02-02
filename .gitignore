@@ -40,7 +40,6 @@ config/active_project.txt
 *.log
 *.mexe
 videos/
-test_*.py
 
 # OS
 .DS_Store
