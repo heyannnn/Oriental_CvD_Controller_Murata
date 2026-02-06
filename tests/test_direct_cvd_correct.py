@@ -13,7 +13,7 @@ import time
 from drivers.cvd_define import *
 from drivers.oriental_cvd import OrientalCvdMotor
 
-COM_PORT = '/dev/ttyUSB0'  # Change for your setup
+COM_PORT = '/dev/tty.usbserial-FT78LMAE'  # Change for your setup  /dev/cu.usbserial-FT78LMAE   /dev/tty.usbserial-FT78LMAE
 SLAVE_ID = 1
 
 def main():

@@ -32,16 +32,15 @@
     "send_port": 9001,
     "is_sender": true,
     "target_ips": [
-      "192.168.10.10",
-      "192.168.10.11",
-      "192.168.10.12",
-      "192.168.10.13",
-      "192.168.10.14",
-      "192.168.10.15",
-      "192.168.10.16",
-      "192.168.10.17",
-      "192.168.10.18",
-      "192.168.10.19"
+      "pi-controller-03.local",
+      "pi-controller-04.local",
+      "pi-controller-05.local",
+      "pi-controller-06.local",
+      "pi-controller-07.local",
+      "pi-controller-08.local",
+      "pi-controller-09.local",
+      "pi-controller-10.local",
+      "pi-controller-11.local"
     ],
     "video_player_ip": "127.0.0.1",
     "video_player_port": 9002

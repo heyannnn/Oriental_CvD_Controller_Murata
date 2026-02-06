@@ -79,22 +79,53 @@ class MotorDriver:
     def start_operation(self, op_no=0):
         """
         Start MEXE operation by number.
+        Uses direct write method (operation # + START bit).
 
         Args:
             op_no: MEXE operation number (0-255)
         """
         logger.info(f"Starting operation {op_no} (slave_id={self.slave_id})")
 
-        # Set operation number
-        self.client.set_operation_no(data_no=op_no, slave_id=self.slave_id)
+        # Direct method: Write START bit (0x0008) to input command register (0x007D)
+        # For operation 0, this is just 0x0008
+        # For other operations, combine: (op_no & 0x0007) | 0x0008
+        start_cmd = 0x0008  # START bit only (operation 0 assumed for now)
 
-        # Send START signal
-        self.client.send_start_signal(slave_id=self.slave_id)
+        result = self.client.client.write_register(
+            address=0x007D,  # Input command register
+            value=start_cmd,
+            slave=self.slave_id
+        )
+
+        if result.isError():
+            logger.error(f"Failed to start operation {op_no}: {result}")
+        else:
+            logger.info(f"Operation {op_no} started successfully")
 
     def stop(self):
         """Send STOP signal to motor"""
         logger.info(f"Stopping motor (slave_id={self.slave_id})")
-        self.client.send_stop_signal(slave_id=self.slave_id)
+
+        # Direct method: Write STOP bit (0x0020) to input command register
+        result = self.client.client.write_register(
+            address=0x007D,
+            value=0x0020,  # STOP bit
+            slave=self.slave_id
+        )
+
+        if result.isError():
+            logger.error(f"Failed to stop motor: {result}")
+        else:
+            logger.info("Motor stopped successfully")
+
+            # Clear command
+            import time
+            time.sleep(0.1)
+            self.client.client.write_register(
+                address=0x007D,
+                value=0x0000,  # Clear all bits
+                slave=self.slave_id
+            )
 
     # ========================================================================
     # Status Queries
@@ -107,7 +138,18 @@ class MotorDriver:
         Returns:
             True if READY flag is set
         """
-        return self.client.checkReadyFlag(slave_id=self.slave_id)
+        # Direct method: Read status register (0x007F)
+        result = self.client.client.read_holding_registers(
+            address=0x007F,
+            count=1,
+            slave=self.slave_id
+        )
+
+        if result.isError():
+            return False
+
+        status = result.registers[0]
+        return (status & 0x0001) != 0  # READY bit
 
     def is_moving(self) -> bool:
         """
@@ -116,10 +158,18 @@ class MotorDriver:
         Returns:
             True if MOVE flag is set
         """
-        status = self.client.read_output_signal(slave_id=self.slave_id)
-        if status is None:
+        # Direct method: Read status register (0x007F)
+        result = self.client.client.read_holding_registers(
+            address=0x007F,
+            count=1,
+            slave=self.slave_id
+        )
+
+        if result.isError():
             return False
-        return (status & OutputSignal.MOVE) != 0
+
+        status = result.registers[0]
+        return (status & 0x0004) != 0  # MOVE bit
 
     def is_in_position(self) -> bool:
         """

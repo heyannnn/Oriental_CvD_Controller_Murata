@@ -12,4 +12,4 @@ gpiozero>=1.6.0
 # --------------------------------------------------------------------------
 # Optional / Testing only:
 # --------------------------------------------------------------------------
-# readchar>=4.0.0          # For test_station2_nogpio.py (keyboard input on Mac)
+readchar>=4.0.0          # For test_station2_nogpio.py (keyboard input on Mac)

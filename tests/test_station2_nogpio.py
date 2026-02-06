@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Mac example: /dev/tty.usbserial-XXXX
 # Linux/RPi: /dev/ttyUSB0
 # Windows: COM4
-COM_PORT = "/dev/tty.usbserial-AB0JVDHO"  # ← CHANGE THIS
+COM_PORT = "/dev/tty.usbserial-FT78LMAE"  # ← CHANGE THIS
 
 TEST_CONFIG = {
     "station_id": "02",
