@@ -1,0 +1,33 @@
+# Oriental Motor Controller — systemd service
+#
+# Deploy to Raspberry Pi:
+#   1. Edit this file and set STATION_ID below (e.g., 02, 04, 07, epilogue)
+#   2. sudo cp systemd/oriental-controller.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable oriental-controller
+#   5. sudo systemctl start oriental-controller
+#
+# Check status:
+#   sudo systemctl status oriental-controller
+#   sudo journalctl -u oriental-controller -f
+
+[Unit]
+Description=Oriental Motor Controller
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Oriental_CvD_Controller_Murata
+
+# IMPORTANT: Set STATION_ID for this Pi (02, 04, 07, etc.)
+Environment="STATION_ID=06"
+
+ExecStart=/home/pi/Oriental_CvD_Controller_Murata/venv/bin/python main.py --station ${STATION_ID}
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

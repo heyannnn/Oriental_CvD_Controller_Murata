@@ -23,12 +23,11 @@ def main():
 
     print("Connected! Scanning for valid registers...\n")
 
-    # Known register ranges to try for Oriental Motor drivers
-    # CVD series might use different addresses than AZ series
+    # Known register ranges for CVD series drivers
     test_ranges = [
         (0x0000, 0x0010, "Basic info"),
         (0x0040, 0x0070, "Direct data area (alternate)"),
-        (0x0058, 0x0068, "Direct data area (AZ standard)"),
+        (0x0058, 0x0068, "Direct operation data"),
         (0x007C, 0x0090, "Operation data"),
         (0x0100, 0x0130, "I/O and status area"),
         (0x0180, 0x01A0, "Parameter area"),
