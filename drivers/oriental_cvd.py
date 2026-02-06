@@ -206,7 +206,7 @@ class OrientalCvdMotor:
 
         # 単一レジスタ書き込み (FC06)
         result = self.client.write_register(
-            address=address, value=value, device_id=slave_id
+            address=address, value=value, slave=slave_id
         )
 
         if result.isError():
@@ -274,7 +274,7 @@ class OrientalCvdMotor:
         #print(f"Sending input signal {signal.name} with value {value:#06x} to slave {slave_id}")
 
         # 単一レジスタ書き込み (FC06)
-        result = self.client.write_register(address=address, value=value, device_id=slave_id)
+        result = self.client.write_register(address=address, value=value, slave=slave_id)
 
         if result.isError():
             print(f"Error sending input signal {signal.name} to slave {slave_id}")
@@ -317,7 +317,7 @@ class OrientalCvdMotor:
     
     def set_operation_no(self, data_no=0, slave_id=1):
         # 運転データNo.の選択 (NET選択番号 007Ah) [10, 11]
-        self.client.write_registers(address=IORegister.NET_SEL_DATA_BASE, values=self._split_32bit(data_no), device_id=slave_id)
+        self.client.write_registers(address=IORegister.NET_SEL_DATA_BASE, values=self._split_32bit(data_no), slave=slave_id)
     
     def make_operation_data(self, position=0, velocity=2000, startRate=1000, stopRate=1000, mode:OPMode=OPMode.ABSOLUTE, current=1.0) -> list:
         # Check Args
@@ -346,7 +346,7 @@ class OrientalCvdMotor:
         self.client.write_registers(
             address=self.get_operation_data_base_address(data_no),
             values=data,
-            device_id=slave_id,
+            slave=slave_id,
         )
     
     def start_direct_operation(self, data_no=0, position=0, velocity=2000, startRate=1000, stopRate=1000, mode:OPMode=OPMode.ABSOLUTE, current=1.0, slave_id=1):
@@ -359,7 +359,7 @@ class OrientalCvdMotor:
         self.client.write_registers(
             address=ADDR_DIRECT_OPERATION,
             values=data,
-            device_id=slave_id,
+            slave=slave_id,
         )
     
 
@@ -374,7 +374,7 @@ class OrientalCvdMotor:
         #print(f"Reading output signal status from slave {slave_id}")
 
         # 単一レジスタ読み取り (FC03)
-        result = self.client.read_holding_registers(address=address, count=1, device_id=slave_id)
+        result = self.client.read_holding_registers(address=address, count=1, slave=slave_id)
 
         if result.isError():
             print(f"Error reading output signal status from slave {slave_id}")
