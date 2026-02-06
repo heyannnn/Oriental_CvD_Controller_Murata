@@ -36,19 +36,61 @@ logger = logging.getLogger(__name__)
 # Configuration Loading
 # ============================================================================
 
-def load_config(station_id):
-    """Load station config from JSON file"""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, 'config', f'station_{station_id}.json')
+def deep_merge(base, override):
+    """Deep merge two dictionaries (override takes precedence)"""
+    result = base.copy()
+    for key, value in override.items():
+        if key.startswith('_'):  # Skip comments
+            continue
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
 
-    if not os.path.exists(config_path):
-        logger.error(f"Config file not found: {config_path}")
+
+def load_config(station_id):
+    """
+    Load station config from master default + station-specific overrides.
+
+    Loads:
+      1. config/default.json (master config)
+      2. config/stations.json (all station overrides)
+      3. Merges default + station-specific override
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Load master default config
+    default_path = os.path.join(script_dir, 'config', 'default.json')
+    if not os.path.exists(default_path):
+        logger.error(f"Master config not found: {default_path}")
         sys.exit(1)
 
-    with open(config_path, 'r') as f:
-        config = json.load(f)
+    with open(default_path, 'r') as f:
+        default_config = json.load(f)
 
-    logger.info(f"Loaded config: {config_path}")
+    # Load all station configs
+    stations_path = os.path.join(script_dir, 'config', 'stations.json')
+    if not os.path.exists(stations_path):
+        logger.error(f"Stations config not found: {stations_path}")
+        sys.exit(1)
+
+    with open(stations_path, 'r') as f:
+        stations = json.load(f)
+
+    # Get station-specific config
+    if station_id not in stations:
+        logger.error(f"Station '{station_id}' not found in stations.json")
+        logger.error(f"Available stations: {', '.join([k for k in stations.keys() if not k.startswith('_')])}")
+        sys.exit(1)
+
+    station_config = stations[station_id]
+
+    # Merge default + station-specific
+    config = deep_merge(default_config, station_config)
+    config['station_id'] = station_id
+
+    logger.info(f"Loaded config: default.json + stations.json['{station_id}']")
     return config
 
 

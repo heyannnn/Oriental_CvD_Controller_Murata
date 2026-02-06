@@ -1,28 +1,18 @@
 {
-  "station_id": "08",
-  "station_name": "工程8 (2-Motor Station)",
+  "_comment": "Master default config - shared by all stations",
 
   "serial": {
-    "port": "/dev/ttyUSB0",
+    "port": "/dev/cu.usbserial-FT78LMAE",
     "baudrate": 230400,
     "parity": "N",
     "stopbits": 1
   },
 
-  "motors": [
-    {
-      "name": "motor_1",
-      "slave_id": 1,
-      "type": "CVD-28-KR"
-    },
-    {
-      "name": "motor_2",
-      "slave_id": 2,
-      "type": "CVD-28-KR"
-    }
-  ],
-
   "keyboard": {
+    "enabled": false
+  },
+
+  "led": {
     "enabled": false
   },
 

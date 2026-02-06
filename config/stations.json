@@ -1,0 +1,117 @@
+{
+  "_comment": "Station-specific configs - only override what's different from default.json",
+
+  "prologue": {
+    "station_name": "Prologue",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+    ]
+  },
+
+  "02": {
+    "station_name": "工程2 (Master)",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+    ],
+    "keyboard": {
+      "enabled": true,
+      "gpio": {
+        "start_button": 17,
+        "stop_button": 27,
+        "reset_button": 22
+      }
+    },
+    "network": {
+      "is_sender": true,
+      "target_ips": [
+        "pi-controller-prologue.local",
+        "pi-controller-03.local",
+        "pi-controller-04.local",
+        "pi-controller-05.local",
+        "pi-controller-06.local",
+        "pi-controller-07.local",
+        "pi-controller-08.local",
+        "pi-controller-09.local",
+        "pi-controller-10.local",
+        "pi-controller-11.local"
+      ]
+    }
+  },
+
+  "03": {
+    "station_name": "工程3",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+    ]
+  },
+
+  "04": {
+    "station_name": "工程4 (3-Motor)",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
+      {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"},
+      {"name": "motor_3", "slave_id": 3, "type": "CVD-28-KR"}
+    ]
+  },
+
+  "05": {
+    "station_name": "工程5",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+    ]
+  },
+
+  "06": {
+    "station_name": "工程6",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+    ]
+  },
+
+  "07": {
+    "station_name": "工程7 (LED)",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+    ],
+    "led": {
+      "enabled": true,
+      "gpio_pin": 18,
+      "pixel_count": 60,
+      "brightness": 128
+    }
+  },
+
+  "08": {
+    "station_name": "工程8 (2-Motor)",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
+      {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
+    ]
+  },
+
+  "09": {
+    "station_name": "工程9 (2-Motor)",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
+      {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
+    ]
+  },
+
+  "10": {
+    "station_name": "工程10 (LED)",
+    "motors": [
+      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+    ],
+    "led": {
+      "enabled": true,
+      "gpio_pin": 18,
+      "pixel_count": 60,
+      "brightness": 128
+    }
+  },
+
+  "epilogue": {
+    "station_name": "Epilogue (Video Only)",
+    "motors": []
+  }
+}
