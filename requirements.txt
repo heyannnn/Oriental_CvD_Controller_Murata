@@ -1,28 +1,15 @@
-# Core dependencies
+# Core dependencies for motor control
 pymodbus>=3.0.0
 pyserial>=3.5
-numpy>=1.24.0
+numpy>=1.20.0
 
-# Input handling
-readchar>=4.0.0
-
-# Communication
+# Communication (OSC for inter-station sync)
 python-osc>=1.8.0
 
-# GPIO (Raspberry Pi only — install on Pi, skip on dev machines)
+# Raspberry Pi GPIO (for keyboard buttons)
 gpiozero>=1.6.0
 
-# LED control (Raspberry Pi only — stations 7 and 10)
-rpi-ws281x>=5.0.0          # WS2812 addressable LED strip control
-
-# Video and timing
-python-vlc>=3.0.0          # RPi HDMI video playback (requires VLC installed)
-python-timecode>=1.4.0
-
-# Utilities
-PyYAML>=6.0
-
 # --------------------------------------------------------------------------
-# Desktop / dev-machine only (not needed on Pi):
-#   opencv-python>=4.8.0   — used for local video preview during development
+# Optional / Testing only:
 # --------------------------------------------------------------------------
+# readchar>=4.0.0          # For test_station2_nogpio.py (keyboard input on Mac)
