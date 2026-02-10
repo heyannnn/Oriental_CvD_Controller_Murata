@@ -1,41 +1,35 @@
 {
-  "_comment": "Station-specific configs - only override what's different from default.json",
+  "_comment": "All station configurations in one file",
 
-  "prologue": {
-    "station_name": "Prologue",
+  "default": {
+    "_comment": "Default settings inherited by all stations",
+    "serial": {
+      "port": "/dev/tty.usbserial-FT78LMAE", 
+      "baudrate": 230400,
+      "parity": "N",
+      "stopbits": 1
+    },
+    "network": {
+      "listen_port": 9000,
+      "send_port": 9001,
+      "video_player_ip": "127.0.0.1",
+      "video_player_port": 9002
+    },
+    "keyboard": {
+      "enabled": false,
+      "type": "usb"
+    },
+    "led": {
+      "enabled": false
+    }
+  },
+
+
+  "02": {
+    "station_name": "工程2",
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
     ]
-  },
-
-  "02": {
-    "station_name": "工程2 (Master)",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ],
-    "keyboard": {
-      "enabled": true,
-      "gpio": {
-        "start_button": 17,
-        "stop_button": 27,
-        "reset_button": 22
-      }
-    },
-    "network": {
-      "is_sender": true,
-      "target_ips": [
-        "pi-controller-prologue.local",
-        "pi-controller-03.local",
-        "pi-controller-04.local",
-        "pi-controller-05.local",
-        "pi-controller-06.local",
-        "pi-controller-07.local",
-        "pi-controller-08.local",
-        "pi-controller-09.local",
-        "pi-controller-10.local",
-        "pi-controller-11.local"
-      ]
-    }
   },
 
   "03": {
@@ -110,8 +104,8 @@
     }
   },
 
-  "epilogue": {
-    "station_name": "Epilogue (Video Only)",
+  "11": {
+    "station_name": "工程11 (Video Only)",
     "motors": []
   }
 }

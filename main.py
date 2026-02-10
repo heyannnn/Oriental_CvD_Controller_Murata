@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
 Oriental Motor CVD Controller - Main Entry Point
-Works on all stations - config file defines station-specific settings
+Works on all stations - config/local.json defines which station this Pi is
 
 Usage:
-    python main.py --station 02
-    python main.py --station prologue
-    python main.py --station epilogue
+    python main.py
+
+Configuration:
+    - config/local.json: Defines which station this Pi is
+    - config/network_master.json: Defines keyboard/master controller settings
+    - config/all_stations.json: All station motor configurations
 """
 
 import sys
 import signal
 import asyncio
 import logging
-import argparse
 import json
 import os
 
@@ -49,48 +51,68 @@ def deep_merge(base, override):
     return result
 
 
-def load_config(station_id):
+def load_local_config():
+    """Load local.json to determine which station this Pi is"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    local_path = os.path.join(script_dir, 'config', 'local.json')
+
+    if not os.path.exists(local_path):
+        logger.error(f"Local config not found: {local_path}")
+        logger.error("Please create config/local.json with your station_id")
+        sys.exit(1)
+
+    with open(local_path, 'r') as f:
+        return json.load(f)
+
+
+def load_network_master_config():
+    """Load network_master.json to see if this Pi controls others"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    master_path = os.path.join(script_dir, 'config', 'network_master.json')
+
+    if not os.path.exists(master_path):
+        # If no network master config, return disabled
+        return {'enabled': False, 'keyboard': {'enabled': False}}
+
+    with open(master_path, 'r') as f:
+        return json.load(f)
+
+
+def load_station_config(station_id):
     """
-    Load station config from master default + station-specific overrides.
+    Load station configuration from all_stations.json
 
     Loads:
-      1. config/default.json (master config)
-      2. config/stations.json (all station overrides)
-      3. Merges default + station-specific override
+      1. config/all_stations.json['default'] (shared settings)
+      2. config/all_stations.json[station_id] (station-specific)
+      3. Merges default + station-specific
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    all_stations_path = os.path.join(script_dir, 'config', 'all_stations.json')
 
-    # Load master default config
-    default_path = os.path.join(script_dir, 'config', 'default.json')
-    if not os.path.exists(default_path):
-        logger.error(f"Master config not found: {default_path}")
+    if not os.path.exists(all_stations_path):
+        logger.error(f"Stations config not found: {all_stations_path}")
         sys.exit(1)
 
-    with open(default_path, 'r') as f:
-        default_config = json.load(f)
+    with open(all_stations_path, 'r') as f:
+        all_stations = json.load(f)
 
-    # Load all station configs
-    stations_path = os.path.join(script_dir, 'config', 'stations.json')
-    if not os.path.exists(stations_path):
-        logger.error(f"Stations config not found: {stations_path}")
-        sys.exit(1)
-
-    with open(stations_path, 'r') as f:
-        stations = json.load(f)
+    # Get default config
+    default_config = all_stations.get('default', {})
 
     # Get station-specific config
-    if station_id not in stations:
-        logger.error(f"Station '{station_id}' not found in stations.json")
-        logger.error(f"Available stations: {', '.join([k for k in stations.keys() if not k.startswith('_')])}")
+    if station_id not in all_stations:
+        logger.error(f"Station '{station_id}' not found in all_stations.json")
+        logger.error(f"Available stations: {', '.join([k for k in all_stations.keys() if not k.startswith('_') and k != 'default'])}")
         sys.exit(1)
 
-    station_config = stations[station_id]
+    station_config = all_stations[station_id]
 
     # Merge default + station-specific
     config = deep_merge(default_config, station_config)
     config['station_id'] = station_id
 
-    logger.info(f"Loaded config: default.json + stations.json['{station_id}']")
+    logger.info(f"Loaded station config: all_stations.json['{station_id}']")
     return config
 
 
@@ -133,17 +155,42 @@ def shutdown(signum, frame):
 async def main():
     global motor_controller, sequence_manager, network_sync, keyboard_handler
 
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Oriental Motor CVD Controller')
-    parser.add_argument('--station', type=str, required=True,
-                        help='Station ID (e.g., 02, 04, prologue, epilogue)')
-    args = parser.parse_args()
+    # Store event loop reference for keyboard callbacks
+    loop = asyncio.get_event_loop()
 
-    # Load station config
-    config = load_config(args.station)
+    # Load local configuration (which station am I?)
+    local_config = load_local_config()
+    station_id = local_config.get('station_id')
+
+    if not station_id:
+        logger.error("station_id not found in config/local.json")
+        sys.exit(1)
+
+    # Load station configuration
+    config = load_station_config(station_id)
+
+    # Load network master configuration (separate from station)
+    network_master_config = load_network_master_config()
+
+    # Apply network master settings if enabled
+    if network_master_config.get('enabled'):
+        config['network']['is_sender'] = True
+        # Build target IPs from station list
+        target_stations = network_master_config.get('target_stations', [])
+        config['network']['target_ips'] = [
+            f"pi-controller-{s}.local" for s in target_stations
+        ]
+        # Apply keyboard settings from master config
+        if network_master_config.get('keyboard', {}).get('enabled'):
+            config['keyboard'] = network_master_config['keyboard']
+
+        logger.info("Network master mode: ENABLED (this Pi controls others)")
+    else:
+        config['network']['is_sender'] = False
+        logger.info("Network master mode: DISABLED (listening for commands)")
 
     logger.info("=" * 70)
-    logger.info(f"Oriental Motor CVD Controller - {config.get('station_name', f'Station {args.station}')}")
+    logger.info(f"Oriental Motor CVD Controller - {config.get('station_name', f'Station {station_id}')}")
     logger.info("=" * 70)
 
     # Setup signal handlers
@@ -198,17 +245,24 @@ async def main():
     # Initialize Keyboard Handler (if enabled in config)
     # ========================================================================
     if config.get('keyboard', {}).get('enabled'):
-        logger.info("\n[4/4] Initializing keyboard (3-key GPIO)...")
+        keyboard_type = config.get('keyboard', {}).get('type', 'usb')
+        logger.info(f"\n[4/4] Initializing keyboard ({keyboard_type})...")
 
         try:
             keyboard_handler = KeyboardHandler(config)
 
             # Wire keyboard to sequence manager
+            # Note: Keyboard callbacks run in separate thread, need to schedule in main loop
             keyboard_handler.set_on_start(sequence_manager.on_start_pressed)
             keyboard_handler.set_on_stop(sequence_manager.on_stop_pressed)
-            keyboard_handler.set_on_reset(lambda: asyncio.create_task(sequence_manager.on_reset_pressed()))
 
-            logger.info("✓ Keyboard handler initialized")
+            # Reset is async, so schedule it in the main event loop
+            def on_reset_wrapper():
+                asyncio.run_coroutine_threadsafe(sequence_manager.on_reset_pressed(), loop)
+
+            keyboard_handler.set_on_reset(on_reset_wrapper)
+
+            logger.info("✓ USB keyboard handler initialized")
 
         except Exception as e:
             logger.warning(f"Keyboard not available: {e}")
@@ -239,10 +293,10 @@ async def main():
     logger.info("=" * 70)
 
     if keyboard_handler:
-        logger.info("\nKeyboard Controls:")
-        logger.info("  START button  - Start operation")
-        logger.info("  STOP button   - Emergency stop")
-        logger.info("  RESET button  - Reset to home")
+        logger.info("\nUSB Keyboard Controls:")
+        logger.info("  V key   - Toggle start/stop operation")
+        logger.info("  C key   - Enter standby mode (return to home)")
+        logger.info("  Ctrl    - Emergency stop (TBD)")
     else:
         logger.info("\nListening for OSC commands from master station")
 

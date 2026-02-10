@@ -12,7 +12,7 @@ from pymodbus.client import ModbusSerialClient
 import time
 import readchar
 
-COM_PORT = '/dev/cu.usbserial-FT78LMAE'  # Your port
+COM_PORT = '/dev/tty.usbserial-FT78LMAE'  # Raspberry Pi USB port (use /dev/cu.usbserial-FT78LMAE on Mac, Raspi: /dev/ttyUSB0)
 SLAVE_ID = 1
 
 print("=" * 70)

@@ -8,6 +8,20 @@ This system controls **11 independent Raspberry Pi installations** (Prologue →
 
 **Key Architecture Principle**: The Raspberry Pi is a **trigger controller only**. All motor motion profiles are pre-programmed using Oriental Motor's **MEXE software** and stored in the driver. The Pi simply selects operation numbers and sends START signals at programmed timecodes.
 
+### USB Keyboard Control
+
+The master station (typically Station 2) can have a USB keyboard connected for manual control:
+
+- **V key**: Toggle start/stop operation
+  - First press: Start video + motors on all stations
+  - Second press: Stop everything
+- **C key**: Enter standby mode
+  - Motors return to home position
+  - Standby video plays
+- **Ctrl key**: Emergency stop (to be defined)
+
+The keyboard can be connected to **any station** - just enable `network_master` mode in that station's config. See `config/README.md` for setup instructions.
+
 ## Hardware
 
 ### Per Station
@@ -17,7 +31,7 @@ This system controls **11 independent Raspberry Pi installations** (Prologue →
 - **24VDC Power Supply** - 3A+ per driver (CVD requires 24V ±10%)
 - **Display** - HDMI video output
 - **Optional**: WS2812 LED strips (stations 7 and 10)
-- **Optional**: 3-key GPIO keyboard (station 2 only)
+- **Optional**: USB keyboard (can be on any station, typically station 2)
 
 ### Network Topology
 - All stations on LAN (192.168.10.10 - 192.168.10.19)
@@ -81,7 +95,7 @@ Oriental_CvD_Controller_Murata/
 | Station | Motors | Slave IDs | Keyboard | LED | Notes |
 |---------|--------|-----------|----------|-----|-------|
 | Prologue | 1 | [1] | no | no | |
-| 工程2 | 1 | [1] | **yes** (3-key) | no | **Master broadcaster** |
+| 工程2 | 1 | [1] | **yes** (USB) | no | **Master broadcaster** |
 | 工程3 | 1 | [1] | no | no | |
 | 工程4 | **3** | [1,2,3] | no | no | Daisy-chain RS-485 |
 | 工程5 | 1 | [1] | no | no | |
@@ -180,8 +194,9 @@ This:
 ### 3. Sequence Execution
 
 #### Station 2 (Master)
-1. Operator presses **START** button (GPIO)
+1. Operator presses **V key** on USB keyboard (start/stop toggle)
 2. Station 2 broadcasts OSC `/start` to all stations (192.168.10.10-19)
+3. Press **V key** again to stop, or **C key** to enter standby mode
 
 #### All Stations
 1. Receive `/start` via OSC
@@ -193,9 +208,10 @@ This:
 5. Motor executes pre-programmed motion autonomously
 6. Pi monitors status flags (READY, MOVE, IN_POS)
 
-#### Stop/Reset
-- **STOP**: Stations 2 broadcasts `/stop` → all Pis stop motors + video
-- **RESET**: Station 2 broadcasts `/reset` → all Pis rewind to beginning, reset cue index
+#### USB Keyboard Controls (Master Station)
+- **V key**: Toggle start/stop - Press once to start, press again to stop operation
+- **C key**: Standby mode - Motors return home, standby video plays
+- **Ctrl key**: Emergency stop (TBD)
 
 ## Key Driver Registers (CVD-28-KR)
 
@@ -289,12 +305,15 @@ numpy>=1.24.0             # Numerical operations
 # Communication
 python-osc>=1.8.0         # OSC inter-station sync
 
+# Keyboard (master station only)
+pynput>=1.7.0             # USB keyboard listener
+
 # Video
 python-vlc>=3.0.0         # VLC Python bindings (requires VLC installed)
 python-timecode>=1.4.0    # Timecode handling
 
 # RPi-only (install on Pi, skip on dev machines)
-gpiozero>=1.6.0           # GPIO control
+gpiozero>=1.6.0           # GPIO control (only for LED strips)
 rpi-ws281x>=5.0.0         # WS2812 LED strips (stations 7, 10)
 
 # Dev-only (local testing)

@@ -37,6 +37,7 @@ env/
 
 # Project specific
 config/active_project.txt
+config/local.json
 *.log
 *.mexe
 videos/

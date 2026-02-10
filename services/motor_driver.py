@@ -203,5 +203,5 @@ class MotorDriver:
             Current position in pulses, or 0 on error
         """
         from drivers.cvd_define import MonitorCommand
-        pos = self.client.read_monitor(MonitorCommand.FEEDBACK_POS, slave_id=self.slave_id)
+        pos = self.client.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=self.slave_id)
         return pos if pos is not None else 0

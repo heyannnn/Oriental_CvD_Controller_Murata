@@ -63,34 +63,41 @@ class MotorController:
         Initialize and auto-home motor.
         This is called on system boot.
         """
+        logger.info("=" * 70)
         logger.info("Initializing motor controller...")
+        logger.info("=" * 70)
 
         # Connect to motor
         try:
             self.driver.connect()
+            logger.info("✓ Motor driver connected")
         except Exception as e:
-            logger.error(f"Failed to connect to motor: {e}")
+            logger.error(f"✗ Failed to connect to motor: {e}")
             self.state = MotorState.ERROR
             if self._on_error:
                 self._on_error(f"Connection failed: {e}")
             return
 
         # Start homing
-        logger.info("Starting automatic homing...")
+        logger.info("Starting automatic homing to position 0...")
         self.state = MotorState.HOMING
 
         try:
             await self.driver.start_homing(timeout=100)
 
-            # Homing complete
-            logger.info("Homing complete - motor READY")
+            # Read final position to verify
+            final_pos = self.driver.read_position()
+            logger.info("=" * 70)
+            logger.info(f"✓ Homing complete - Motor READY at position: {final_pos}")
+            logger.info("=" * 70)
+
             self.state = MotorState.READY
 
             if self._on_ready:
                 self._on_ready()
 
         except Exception as e:
-            logger.error(f"Homing failed: {e}")
+            logger.error(f"✗ Homing failed: {e}")
             self.state = MotorState.ERROR
             if self._on_error:
                 self._on_error(f"Homing failed: {e}")
@@ -103,10 +110,15 @@ class MotorController:
             op_no: MEXE operation number
         """
         if self.state != MotorState.READY:
-            logger.warning(f"Cannot start operation - motor not ready (state={self.state.value})")
+            logger.warning(f"⚠ Cannot start operation - motor not ready (state={self.state.value})")
             return
 
-        logger.info(f"Starting operation {op_no}")
+        # Read current position before starting
+        current_pos = self.driver.read_position()
+        logger.info("=" * 70)
+        logger.info(f"Starting MEXE operation {op_no} from position: {current_pos}")
+        logger.info("=" * 70)
+
         self.state = MotorState.RUNNING
         self.current_operation = op_no
 
@@ -121,20 +133,30 @@ class MotorController:
         Monitor operation until completion.
         Sends finished callback when MOVE flag clears.
         """
-        logger.info("Monitoring operation...")
+        logger.info(f"Monitoring operation {self.current_operation}...")
 
         # Wait a moment for motion to start
         await asyncio.sleep(0.5)
 
         # Monitor until motion stops
         start_time = time.time()
+        last_log_time = 0
+
         while True:
             moving = self.driver.is_moving()
+            ready = self.driver.is_ready()
+            in_pos = self.driver.is_in_position()
+            position = self.driver.read_position()
             elapsed = time.time() - start_time
+
+            # Log status every 0.5 seconds to avoid spam
+            if elapsed - last_log_time >= 0.5:
+                logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | Pos: {position:8d} | READY: {ready} | MOVE: {moving} | IN_POS: {in_pos}")
+                last_log_time = elapsed
 
             if not moving and elapsed > 1.0:
                 # Motion complete
-                logger.info(f"Operation {self.current_operation} finished ({elapsed:.1f}s)")
+                logger.info(f"✓ Operation {self.current_operation} FINISHED - Final pos: {position} ({elapsed:.1f}s)")
                 self.state = MotorState.FINISHED
 
                 if self._on_finished:

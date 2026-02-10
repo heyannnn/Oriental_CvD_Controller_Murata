@@ -130,8 +130,8 @@ class OrientalCvdMotor:
     """2つの16bitレジスタを1つの符号付き32bit整数に結合する [1]"""
 
     def _combine_32bit(self, registers):
-        high = registers
-        low = registers[7]
+        high = registers[0]
+        low = registers[1]
         value = (high << 16) | low
         # 符号付き(32bit 2の補数)の処理
         if value & 0x80000000:
@@ -407,10 +407,21 @@ class OrientalCvdMotor:
         while True:
             b = self.checkHomeEndFlag(slave_id=slave_id)
             elapsed = time.time() - startTime
-            print(f"elapsed: {elapsed:.1f}s", end='\r', flush=True)
 
-            #print(f"HomeEnd Flag: {'ON' if b else 'OFF'}")
+            # Read current position for monitoring
+            position = self.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=slave_id)
+            if position is None:
+                position = 0
+
+            # Read status flags
+            status = self.read_output_signal(slave_id=slave_id)
+            ready_flag = (status & OutputSignal.READY) != 0 if status else False
+            move_flag = (status & OutputSignal.MOVE) != 0 if status else False
+
+            print(f"Homing: {elapsed:.1f}s | Pos: {position:8d} | READY: {ready_flag} | MOVE: {move_flag} | HOME_END: {b}", end='\r', flush=True)
+
             if b:
+                print()  # New line after completion
                 break
 
             await asyncio.sleep(0.2)  # 他のタスクに処理権を譲る
@@ -425,13 +436,19 @@ class OrientalCvdMotor:
 
         try:
             await asyncio.wait_for(self._wait_homing_complete(slave_id=slave_id), timeout=timeout)
-            print("\r\nHoming completed successfully.")
+
+            # Read final position
+            final_position = self.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=slave_id)
+            if final_position is None:
+                final_position = 0
+
+            print(f"Homing completed successfully. Final position: {final_position}")
             self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
 
         except asyncio.TimeoutError:
             print("Homing operation timed out.")
             self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
-        
+
         except Exception as e:
             print(f"Error during homing operation: {e}")
 
