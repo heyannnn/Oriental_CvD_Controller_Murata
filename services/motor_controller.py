@@ -158,49 +158,22 @@ class MotorController:
     async def _monitor_operation(self):
         """
         Monitor operation until completion.
-        Uses HYBRID detection:
-        1. Primary: RUNNING_DATA_NO register (most reliable for operations with dwells)
-        2. Fallback: READY + !MOVE + IN_POS status bits (for when RUNNING_DATA_NO doesn't work)
+        Uses RUNNING_DATA_NO register to detect true completion (not just motion stop).
+        This handles operations with dwell times, retracts, or multi-step moves correctly.
         """
         logger.info(f"Monitoring operation {self.current_operation}...")
         logger.info(f"Callback set: {self._on_finished is not None}")
 
-        # Log initial status
-        initial_status = self.driver.get_detailed_status()
-        if initial_status:
-            logger.info(f"Initial status (before motion): {initial_status}")
-
-            # Check for errors
-            if initial_status['ALARM']:
-                logger.error("⚠️ ALARM is active! Motor cannot start. Press Ctrl to clear alarm.")
-                self.state = MotorState.ERROR
-                return
-
-        # Wait for motor to start moving (up to 3 seconds)
-        logger.info("Waiting for motor to start moving...")
-        for i in range(30):  # 30 * 0.1s = 3 seconds max wait
-            await asyncio.sleep(0.1)
-            if self.driver.is_moving():
-                logger.info(f"✓ Motion detected after {(i+1)*0.1:.1f}s")
-                break
-        else:
-            # No motion detected after 3 seconds
-            status_after_wait = self.driver.get_detailed_status()
-            logger.warning(f"⚠️ No motion detected after 3 seconds. Status: {status_after_wait}")
-            logger.warning("  Possible issues:")
-            logger.warning("  1. Operation not programmed in MEXE02")
-            logger.warning("  2. Motor in alarm state")
-            logger.warning("  3. Wrong operation number")
-            logger.warning("  Will continue monitoring for completion anyway...")
+        # Wait a moment for operation to start
+        await asyncio.sleep(0.5)
 
         # Monitor until operation completes
         start_time = time.time()
         last_log_time = 0
-        motion_detected = False  # Track if we ever saw motion
-        stable_stop_count = 0   # Count consecutive readings of MOVE=0, READY=1
+        operation_started = False
 
         while True:
-            # Read all status indicators
+            # Read running operation number from driver
             running_op = self.driver.read_running_operation()
             moving = self.driver.is_moving()
             ready = self.driver.is_ready()
@@ -208,53 +181,41 @@ class MotorController:
             position = self.driver.read_position()
             elapsed = time.time() - start_time
 
-            # Detect motion start
-            if not motion_detected and moving:
-                motion_detected = True
-                logger.info(f"✓ Motion detected - operation {self.current_operation} is running")
+            # Check if operation started
+            if not operation_started and running_op == self.current_operation:
+                operation_started = True
+                logger.info(f"Operation {self.current_operation} confirmed started (RUNNING_DATA_NO={running_op})")
 
             # Log status every 0.5 seconds to avoid spam
             if elapsed - last_log_time >= 0.5:
-                logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | Pos: {position:8d} | RUN_OP: {running_op} | MOVE: {moving} | READY: {ready} | IN_POS: {in_pos}")
+                logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | Pos: {position:8d} | RUNNING_OP: {running_op} | MOVE: {moving} | IN_POS: {in_pos}")
                 last_log_time = elapsed
 
-            # Completion Detection - Use ONLY status bits (most reliable)
-            # Check if motor is stopped (MOVE=0) and ready (READY=1)
-            if ready and not moving:
-                stable_stop_count += 1
+            # Detect operation completion: RUNNING_DATA_NO becomes -1
+            if operation_started and running_op == -1:
+                # Operation truly complete (driver says so, not just motion stopped)
+                logger.info(f"✓ Operation {self.current_operation} FINISHED - Final pos: {position} ({elapsed:.1f}s)")
+                logger.info(f"  RUNNING_DATA_NO = -1 (operation complete)")
+                self.state = MotorState.FINISHED
 
-                # Need 3 consecutive stable readings to confirm completion (0.3s)
-                if stable_stop_count >= 3:
-                    final_status = self.driver.get_detailed_status()
+                if self._on_finished:
+                    logger.info("Calling on_finished callback")
+                    try:
+                        self._on_finished()
+                    except Exception as e:
+                        logger.error(f"Error in on_finished callback: {e}", exc_info=True)
+                else:
+                    logger.warning("No on_finished callback set!")
 
-                    # Only consider it complete if we saw motion OR waited at least 3 seconds
-                    if motion_detected or elapsed > 3.0:
-                        logger.info(f"✓ Operation {self.current_operation} FINISHED (MOVE=0, READY=1) - Final pos: {position} ({elapsed:.1f}s)")
-                        logger.info(f"  Motion was detected: {motion_detected}")
-                        logger.info(f"  RUNNING_OP: {running_op}")
-                        logger.info(f"  Final status: {final_status}")
+                # Return to ready state
+                await asyncio.sleep(0.5)
+                self.state = MotorState.READY
+                break
 
-                        self.state = MotorState.FINISHED
-                        if self._on_finished:
-                            logger.info("Calling on_finished callback")
-                            try:
-                                self._on_finished()
-                            except Exception as e:
-                                logger.error(f"Error in on_finished callback: {e}", exc_info=True)
-                        else:
-                            logger.warning("No on_finished callback set!")
-
-                        await asyncio.sleep(0.5)
-                        self.state = MotorState.READY
-                        break
-            else:
-                # Reset stable count if motor is moving or not ready
-                stable_stop_count = 0
-
-            # Timeout safety
+            # Timeout safety (if operation doesn't start or complete in reasonable time)
             if elapsed > 300:  # 5 minutes timeout
                 logger.error(f"Operation monitoring timeout after {elapsed:.1f}s")
-                logger.error(f"  RUNNING_DATA_NO = {running_op}, READY={ready}, MOVE={moving}")
+                logger.error(f"  RUNNING_DATA_NO = {running_op}, expected 0 or -1")
                 self.state = MotorState.ERROR
                 break
 
