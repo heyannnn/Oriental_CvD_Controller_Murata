@@ -62,6 +62,11 @@ class NetworkSync:
         self.dispatcher.map("/stop", self._handle_stop)
         self.dispatcher.map("/reset", self._handle_reset)
 
+        # Keyboard control commands
+        self.dispatcher.map("/control/launch", self._handle_launch)
+        self.dispatcher.map("/control/start", self._handle_control_start)
+        self.dispatcher.map("/control/stop", self._handle_control_stop)
+
         self.server = BlockingOSCUDPServer(("0.0.0.0", self.listen_port), self.dispatcher)
         self.server_thread = None
 
@@ -69,6 +74,7 @@ class NetworkSync:
         self._on_start = None
         self._on_stop = None
         self._on_reset = None
+        self._on_launch = None
 
     def set_on_start(self, callback):
         """Set callback for START command"""
@@ -81,6 +87,10 @@ class NetworkSync:
     def set_on_reset(self, callback):
         """Set callback for RESET command"""
         self._on_reset = callback
+
+    def set_on_launch(self, callback):
+        """Set callback for LAUNCH command"""
+        self._on_launch = callback
 
     def start_listener(self):
         """Start OSC server in background thread"""
@@ -140,22 +150,40 @@ class NetworkSync:
                 logger.error(f"Failed to send RESET to {ip}: {e}")
 
     def _handle_start(self, address, *args):
-        """OSC handler for /start"""
+        """OSC handler for /start (inter-station broadcast)"""
         logger.info("Received START command via OSC")
         if self._on_start:
             self._on_start()
 
     def _handle_stop(self, address, *args):
-        """OSC handler for /stop"""
+        """OSC handler for /stop (inter-station broadcast)"""
         logger.info("Received STOP command via OSC")
         if self._on_stop:
             self._on_stop()
 
     def _handle_reset(self, address, *args):
-        """OSC handler for /reset"""
+        """OSC handler for /reset (inter-station broadcast)"""
         logger.info("Received RESET command via OSC")
         if self._on_reset:
             self._on_reset()
+
+    def _handle_launch(self, address, *args):
+        """OSC handler for /control/launch (from keyboard.py)"""
+        logger.info("Received LAUNCH command from keyboard controller")
+        if self._on_launch:
+            self._on_launch()
+
+    def _handle_control_start(self, address, *args):
+        """OSC handler for /control/start (from keyboard.py)"""
+        logger.info("Received START command from keyboard controller")
+        if self._on_start:
+            self._on_start()
+
+    def _handle_control_stop(self, address, *args):
+        """OSC handler for /control/stop (from keyboard.py)"""
+        logger.info("Received STOP command from keyboard controller")
+        if self._on_stop:
+            self._on_stop()
 
     # ========================================================================
     # Video Player Commands

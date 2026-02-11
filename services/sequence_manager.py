@@ -123,16 +123,16 @@ class SequenceManager:
 
     def on_start_pressed(self):
         """
-        START button pressed.
-        Flow: READY → STANDBY → RUNNING (with looping enabled)
+        START button pressed (V key when not running).
+        Flow: READY → STANDBY → RUNNING (looping handled by video completion)
         """
-        if self.state != SystemState.READY:
+        if self.state != SystemState.READY and self.state != SystemState.STANDBY and self.state != SystemState.STOPPED:
             logger.warning(f"Cannot start - system not ready (state={self.state.value})")
             return
 
         logger.info("=== START PRESSED ===")
 
-        # Enable looping mode
+        # Enable looping mode (will continue after each operation finishes)
         self.is_looping = True
         self.cycle_count = 1
 
@@ -143,23 +143,23 @@ class SequenceManager:
         # Send standby to video player
         self.network_sync.send_video_command("standby")
 
-        # Broadcast standby to all stations (if this is station 2)
+        # Broadcast start to all stations (if this is master)
         self.network_sync.broadcast_start()
 
         # Start motor operation
-        logger.info(f"Starting looping mode (delay: {self.loop_delay_sec}s between cycles)")
         logger.info(f"=== Starting cycle {self.cycle_count} ===")
         self.state = SystemState.RUNNING
 
         # Start operation 0 (or read from config)
-        self.motor_controller.start_operation(op_no=0)
+        if self.motor_controller:
+            self.motor_controller.start_operation(op_no=0)
 
         logger.info("=== SYSTEM RUNNING ===")
 
     def on_stop_pressed(self):
         """
-        STOP button pressed.
-        Emergency stop all motors and disable looping.
+        STOP button pressed (V key when running).
+        Stop motors (return to zero if configured) and disable looping.
         """
         logger.info("=== STOP PRESSED ===")
 
@@ -167,8 +167,9 @@ class SequenceManager:
         self.is_looping = False
         logger.info("Looping mode disabled")
 
-        # Stop motor
-        self.motor_controller.stop()
+        # Stop motor (may return to zero depending on config)
+        if self.motor_controller:
+            self.motor_controller.stop()
 
         # Send stop to video player
         self.network_sync.send_video_command("stop")
@@ -176,8 +177,8 @@ class SequenceManager:
         # Broadcast stop to all stations
         self.network_sync.broadcast_stop()
 
-        self.state = SystemState.STOPPED
-        logger.info("System stopped")
+        self.state = SystemState.STANDBY
+        logger.info("System in standby - motors at position 0 or stopped")
 
     async def _loop_next_cycle(self):
         """

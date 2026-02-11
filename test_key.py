@@ -61,7 +61,7 @@ try:
                 print("\n>>> START - Sending operation 0...")
 
                 # Method: Write START bit directly
-                result = client.write_register(address=0x007D, value=0x0008, slave=SLAVE_ID)
+                result = client.write_register(address=0x007D, value=0x0008, device_id=SLAVE_ID)
 
                 if result.isError():
                     print(f"❌ Error: {result}")
@@ -74,7 +74,7 @@ try:
                 # STOP
                 print("\n>>> STOP - Stopping motor...")
 
-                result = client.write_register(address=0x007D, value=0x0020, slave=SLAVE_ID)
+                result = client.write_register(address=0x007D, value=0x0020, device_id=SLAVE_ID)
 
                 if result.isError():
                     print(f"❌ Error: {result}")
@@ -83,7 +83,7 @@ try:
                     time.sleep(0.2)
 
                     # Clear command
-                    client.write_register(address=0x007D, value=0x0000, slave=SLAVE_ID)
+                    client.write_register(address=0x007D, value=0x0000, device_id=SLAVE_ID)
 
         elif key == 'q':
             print("\n\nQuitting...")
@@ -95,8 +95,8 @@ except KeyboardInterrupt:
 finally:
     # Stop motor and cleanup
     print("Sending STOP command...")
-    client.write_register(address=0x007D, value=0x0020, slave=SLAVE_ID)
+    client.write_register(address=0x007D, value=0x0020, device_id=SLAVE_ID)
     time.sleep(0.1)
-    client.write_register(address=0x007D, value=0x0000, slave=SLAVE_ID)
+    client.write_register(address=0x007D, value=0x0000, device_id=SLAVE_ID)
     client.close()
     print("✓ Closed")

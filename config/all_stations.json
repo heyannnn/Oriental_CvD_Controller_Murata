@@ -10,10 +10,10 @@
       "stopbits": 1
     },
     "network": {
-      "listen_port": 9000,
-      "send_port": 9001,
+      "listen_port": 9010,
+      "send_port": 9011,
       "video_player_ip": "127.0.0.1",
-      "video_player_port": 9002
+      "video_player_port": 9000
     },
     "keyboard": {
       "enabled": false,
@@ -31,8 +31,8 @@
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
     ],
-    "homing_required": false,
-    "return_to_zero_on_stop": false
+    "homing_required": true,
+    "return_to_zero_on_stop": true
   },
 
   "03": {

@@ -1,15 +1,18 @@
 """
 Keyboard Handler - USB keyboard input (Master station only)
 Monitors V, C, Ctrl keys on USB keyboard for system control
+
+Uses readchar for better Raspberry Pi compatibility.
 """
 
 import logging
+import threading
 
 try:
-    from pynput import keyboard
-    PYNPUT_AVAILABLE = True
+    import readchar
+    READCHAR_AVAILABLE = True
 except ImportError:
-    PYNPUT_AVAILABLE = False
+    READCHAR_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,8 @@ class KeyboardHandler:
     """
     USB keyboard handler for master control station.
     Keys: V (start/stop toggle), C (standby), Ctrl (emergency)
+
+    Uses readchar instead of pynput for better Pi compatibility.
     """
 
     def __init__(self, config):
@@ -27,8 +32,8 @@ class KeyboardHandler:
         Args:
             config: Station config dict with 'keyboard' section
         """
-        if not PYNPUT_AVAILABLE:
-            raise ImportError("pynput not available - install with: pip install pynput")
+        if not READCHAR_AVAILABLE:
+            raise ImportError("readchar not available - install with: pip install readchar")
 
         # Callback placeholders (wired by main.py)
         self._on_start = None
@@ -39,9 +44,10 @@ class KeyboardHandler:
         # State tracking for V key toggle
         self.is_running = False
 
-        # Start keyboard listener
-        self.listener = keyboard.Listener(on_press=self._on_key_press)
-        self.listener.start()
+        # Thread control
+        self._running = True
+        self._thread = threading.Thread(target=self._keyboard_loop, daemon=True)
+        self._thread.start()
 
         logger.info("USB keyboard handler initialized (V=start/stop, C=standby, Ctrl=emergency)")
 
@@ -61,41 +67,50 @@ class KeyboardHandler:
         """Set callback for CLEAR ALARM (Ctrl key)"""
         self._on_clear_alarm = callback
 
-    def _on_key_press(self, key):
-        """Handle key press events"""
-        try:
-            # V key - Start/Stop toggle
-            if hasattr(key, 'char') and key.char == 'v':
-                if self.is_running:
-                    logger.info("V key pressed: STOP")
-                    if self._on_stop:
-                        self._on_stop()
+    def _keyboard_loop(self):
+        """Background thread that reads keyboard input"""
+        logger.info("Keyboard listener thread started")
+
+        while self._running:
+            try:
+                # Read single character (blocking)
+                key = readchar.readchar()
+
+                # Debug log
+                # logger.info(f"KEY DETECTED: '{key}' (ord: {ord(key) if len(key) == 1 else 'special'})")
+
+                # V key - Start/Stop toggle
+                if key.lower() == 'v':
+                    if self.is_running:
+                        logger.info("V key pressed: STOP")
+                        if self._on_stop:
+                            self._on_stop()
+                        self.is_running = False
+                    else:
+                        logger.info("V key pressed: START")
+                        if self._on_start:
+                            self._on_start()
+                        self.is_running = True
+
+                # C key - Standby/Reset
+                elif key.lower() == 'c':
+                    logger.info("C key pressed: STANDBY/RESET")
+                    if self._on_reset:
+                        self._on_reset()
                     self.is_running = False
-                else:
-                    logger.info("V key pressed: START")
-                    if self._on_start:
-                        self._on_start()
-                    self.is_running = True
 
-            # C key - Standby/Reset
-            elif hasattr(key, 'char') and key.char == 'c':
-                logger.info("C key pressed: STANDBY/RESET")
-                if self._on_reset:
-                    self._on_reset()
-                self.is_running = False  # Reset state to stopped
+                # Ctrl+C is handled by Python's signal handler
+                # Ctrl key alone (ASCII 0x11 for Ctrl+Q, etc.)
+                elif ord(key) < 32 and key != '\r' and key != '\n':
+                    logger.info(f"Ctrl combo detected (ord: {ord(key)}): CLEAR ALARM")
+                    if self._on_clear_alarm:
+                        self._on_clear_alarm()
 
-            # Ctrl key - Clear alarm
-            elif key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-                logger.info("Ctrl pressed: CLEAR ALARM")
-                if self._on_clear_alarm:
-                    self._on_clear_alarm()
-
-        except AttributeError:
-            # Key doesn't have 'char' attribute (special keys)
-            pass
+            except Exception as e:
+                if self._running:  # Only log if not shutting down
+                    logger.error(f"Keyboard read error: {e}")
 
     def close(self):
         """Cleanup keyboard listener"""
-        if self.listener:
-            self.listener.stop()
-            logger.info("USB keyboard handler closed")
+        self._running = False
+        logger.info("USB keyboard handler closed")

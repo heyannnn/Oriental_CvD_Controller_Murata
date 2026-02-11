@@ -153,7 +153,7 @@ class OrientalCvdMotor:
     def read_monitor(self, command: MonitorCommand, slave_id=1):
         # 指定した上位アドレスから2レジスタ分を読み出す
         result = self.client.read_holding_registers(
-            address=command, count=2, slave=slave_id
+            address=command, count=2, device_id=slave_id
         )
 
         if not result.isError():
@@ -168,7 +168,7 @@ class OrientalCvdMotor:
         registers = self._split_32bit(value)
         # 上位・下位を同時に書き込むことが推奨されている [2]
         result = self.client.write_registers(
-            address=address, values=registers, slave=slave_id
+            address=address, values=registers, device_id=slave_id
         )
         return not result.isError()
 
@@ -206,7 +206,7 @@ class OrientalCvdMotor:
 
         # 単一レジスタ書き込み (FC06)
         result = self.client.write_register(
-            address=address, value=value, slave=slave_id
+            address=address, value=value, device_id=slave_id
         )
 
         if result.isError():
@@ -259,7 +259,7 @@ class OrientalCvdMotor:
     #     else:
     #         signal = InputSignal.OFF  # 停止
         
-    #     self.send_input_signal(signal=signal, slave_id=slave_id)
+    #     self.send_input_signal(signal=signal, device_id=slave_id)
 
 
 
@@ -274,7 +274,7 @@ class OrientalCvdMotor:
         #print(f"Sending input signal {signal.name} with value {value:#06x} to slave {slave_id}")
 
         # 単一レジスタ書き込み (FC06)
-        result = self.client.write_register(address=address, value=value, slave=slave_id)
+        result = self.client.write_register(address=address, value=value, device_id=slave_id)
 
         if result.isError():
             print(f"Error sending input signal {signal.name} to slave {slave_id}")
@@ -303,21 +303,21 @@ class OrientalCvdMotor:
         else:
             signal = InputSignal.OFF  # 停止
         
-        self.send_input_signal(signal=signal, slave_id=slave_id)
+        self.send_input_signal(signal=signal, device_id=slave_id)
 
     def send_start_signal(self, slave_id=1):
-        self.send_input_signal(signal=InputSignal.START, slave_id=slave_id)
+        self.send_input_signal(signal=InputSignal.START, device_id=slave_id)
 
     def send_stop_signal(self, slave_id=1):
-        self.send_input_signal(signal=InputSignal.STOP, slave_id=slave_id)
+        self.send_input_signal(signal=InputSignal.STOP, device_id=slave_id)
 
     def send_signal_reset(self, slave_id=1):
-        self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
+        self.send_input_signal(signal=InputSignal.OFF, device_id=slave_id)
     
     
     def set_operation_no(self, data_no=0, slave_id=1):
         # 運転データNo.の選択 (NET選択番号 007Ah) [10, 11]
-        self.client.write_registers(address=IORegister.NET_SEL_DATA_BASE, values=self._split_32bit(data_no), slave=slave_id)
+        self.client.write_registers(address=IORegister.NET_SEL_DATA_BASE, values=self._split_32bit(data_no), device_id=slave_id)
     
     def make_operation_data(self, position=0, velocity=2000, startRate=1000, stopRate=1000, mode:OPMode=OPMode.ABSOLUTE, current=1.0) -> list:
         # Check Args
@@ -339,14 +339,14 @@ class OrientalCvdMotor:
     def set_operation_data(self, data_no=0, position=0, velocity=2000, startRate=1000, stopRate=1000, mode:OPMode=OPMode.ABSOLUTE, current=1.0, slave_id=1):
         
         # 運転データNo.の選択
-        self.set_operation_no(data_no=data_no, slave_id=slave_id)
+        self.set_operation_no(data_no=data_no, device_id=slave_id)
 
         data = self.make_operation_data(position=position, velocity=velocity, startRate=startRate, stopRate=stopRate, mode=mode, current=current)
         
         self.client.write_registers(
             address=self.get_operation_data_base_address(data_no),
             values=data,
-            slave=slave_id,
+            device_id=slave_id,
         )
     
     def start_direct_operation(self, data_no=0, position=0, velocity=2000, startRate=1000, stopRate=1000, mode:OPMode=OPMode.ABSOLUTE, current=1.0, slave_id=1):
@@ -359,7 +359,7 @@ class OrientalCvdMotor:
         self.client.write_registers(
             address=ADDR_DIRECT_OPERATION,
             values=data,
-            slave=slave_id,
+            device_id=slave_id,
         )
     
 
@@ -374,7 +374,7 @@ class OrientalCvdMotor:
         #print(f"Reading output signal status from slave {slave_id}")
 
         # 単一レジスタ読み取り (FC03)
-        result = self.client.read_holding_registers(address=address, count=1, slave=slave_id)
+        result = self.client.read_holding_registers(address=address, count=1, device_id=slave_id)
 
         if result.isError():
             print(f"Error reading output signal status from slave {slave_id}")
@@ -386,7 +386,7 @@ class OrientalCvdMotor:
             return status
     
     def checkReadyFlag(self, slave_id=1) -> bool:
-        status = self.read_output_signal(slave_id=slave_id)
+        status = self.read_output_signal(device_id=slave_id)
         if status is None:
             return False
         
@@ -394,7 +394,7 @@ class OrientalCvdMotor:
         return ready_flag
     
     def checkHomeEndFlag(self, slave_id=1) -> bool:
-        status = self.read_output_signal(slave_id=slave_id)
+        status = self.read_output_signal(device_id=slave_id)
         if status is None:
             return False
         
@@ -405,16 +405,16 @@ class OrientalCvdMotor:
         b = False
         startTime = time.time()
         while True:
-            b = self.checkHomeEndFlag(slave_id=slave_id)
+            b = self.checkHomeEndFlag(device_id=slave_id)
             elapsed = time.time() - startTime
 
             # Read current position for monitoring
-            position = self.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=slave_id)
+            position = self.read_monitor(MonitorCommand.COMMAND_POSITION, device_id=slave_id)
             if position is None:
                 position = 0
 
             # Read status flags
-            status = self.read_output_signal(slave_id=slave_id)
+            status = self.read_output_signal(device_id=slave_id)
             ready_flag = (status & OutputSignal.READY) != 0 if status else False
             move_flag = (status & OutputSignal.MOVE) != 0 if status else False
 
@@ -432,22 +432,22 @@ class OrientalCvdMotor:
     """
     async def start_homing_async(self, timeout=100, slave_id=1):
         print("Homing started...")
-        self.send_input_signal(signal=InputSignal.HOME, slave_id=slave_id)
+        self.send_input_signal(signal=InputSignal.HOME, device_id=slave_id)
 
         try:
-            await asyncio.wait_for(self._wait_homing_complete(slave_id=slave_id), timeout=timeout)
+            await asyncio.wait_for(self._wait_homing_complete(device_id=slave_id), timeout=timeout)
 
             # Read final position
-            final_position = self.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=slave_id)
+            final_position = self.read_monitor(MonitorCommand.COMMAND_POSITION, device_id=slave_id)
             if final_position is None:
                 final_position = 0
 
             print(f"Homing completed successfully. Final position: {final_position}")
-            self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
+            self.send_input_signal(signal=InputSignal.OFF, device_id=slave_id)
 
         except asyncio.TimeoutError:
             print("Homing operation timed out.")
-            self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
+            self.send_input_signal(signal=InputSignal.OFF, device_id=slave_id)
 
         except Exception as e:
             print(f"Error during homing operation: {e}")

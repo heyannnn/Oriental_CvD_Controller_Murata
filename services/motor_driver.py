@@ -104,7 +104,7 @@ class MotorDriver:
         result = self.client.client.write_register(
             address=0x007D,
             value=cmd_value,
-            slave=self.slave_id
+            device_id=self.slave_id
         )
 
         if result.isError():
@@ -119,7 +119,7 @@ class MotorDriver:
             self.client.client.write_register(
                 address=0x007D,
                 value=0x0000,
-                slave=self.slave_id
+                device_id=self.slave_id
             )
             return True
 
@@ -279,7 +279,7 @@ class MotorDriver:
         result = self.client.client.read_holding_registers(
             address=0x007F,
             count=1,
-            slave=self.slave_id
+            device_id=self.slave_id
         )
 
         if result.isError():

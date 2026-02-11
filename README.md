@@ -8,21 +8,28 @@ This system controls **11 independent Raspberry Pi installations** (Prologue →
 
 **Key Architecture Principle**: The Raspberry Pi is a **trigger controller only**. All motor motion profiles are pre-programmed using Oriental Motor's **MEXE software** and stored in the driver. The Pi simply selects operation numbers and sends START signals at programmed timecodes.
 
-### USB Keyboard Control
+### System Startup and Keyboard Control
 
-The master station (typically Station 2) can have a USB keyboard connected for manual control:
+**New centralized startup flow** - Run only `keyboard.py` on Pi 2 (master station):
 
-- **V key**: Toggle start/stop operation
-  - First press: Start video + motors on all stations
-  - Second press: Stop everything
-- **C key**: Enter standby mode
-  - Motors return to home position
-  - Standby video plays
-- **Ctrl key**: Clear motor alarm
-  - Clears any active alarms on the motor driver
-  - Recovers system from error state
+1. **Start keyboard.py on Pi 2**: This is the only program you need to start manually
+2. **Press V key (first time)**: SSH into all stations (2-11) and automatically start `main.py` on each
+3. **Wait ~30-60 seconds**: All stations initialize and home their motors simultaneously
+4. **Press V key (second time)**: Start synchronized operation on all stations
+5. **Press V key (while running)**: Stop all operations
+   - Stations 5,6,7,8,9: Return to position 0 (absolute positioning)
+   - Stations 2,3,4,10: Stop in current position
+6. **Press V key (after stopped)**: Resume operations
 
-The keyboard can be connected to **any station** - just enable `network_master` mode in that station's config. See `config/README.md` for setup instructions.
+**Requirements**: SSH passwordless login must be configured from Pi 2 to all other stations. See `SSH_SETUP.md` for detailed setup instructions.
+
+**Keyboard Controls**:
+- **V key**:
+  - First press: Launch all stations via SSH
+  - Second press: Start operation + video on all stations
+  - Third press (while running): Stop all stations (some return to zero, some stop in place)
+  - Fourth press (after stop): Resume operation
+- **Ctrl key**: Clear motor alarm (if motors enter error state)
 
 ## Hardware
 
@@ -44,6 +51,85 @@ The keyboard can be connected to **any station** - just enable `network_master` 
 - **Motor Control**: Modbus RTU over RS-485, 230400 baud, 8N1
 - **Inter-Station**: OSC over UDP (port 9000 listen, 9001 send)
 - **Slave IDs**: 1-3 per station (daisy-chained RS-485)
+
+## Quick Start
+
+### Prerequisites
+
+1. **SSH Setup**: Configure passwordless SSH from Pi 2 to all other stations
+   ```bash
+   # On Pi 2, generate SSH key
+   ssh-keygen -t rsa -b 4096
+
+   # Copy to each station
+   ssh-copy-id pi@pi-controller-03.local
+   ssh-copy-id pi@pi-controller-04.local
+   # ... repeat for all stations
+   ```
+   See `SSH_SETUP.md` for detailed instructions.
+
+2. **Clone Repository on All Stations**: Ensure code exists on all Pis
+   ```bash
+   # On each Pi
+   cd /home/pi
+   git clone <your-repo> Oriental_CvD_Controller_Murata
+   cd Oriental_CvD_Controller_Murata
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+3. **Configure Each Station**: Create `config/local.json` on each Pi
+   ```bash
+   # On Pi 2
+   echo '{"station_id": "02"}' > config/local.json
+
+   # On Pi 3
+   echo '{"station_id": "03"}' > config/local.json
+
+   # ... etc for each station
+   ```
+
+### Running the System
+
+**On Pi 2 (Master Station) ONLY**:
+
+```bash
+cd /home/pi/Oriental_CvD_Controller_Murata
+python keyboard.py
+```
+
+**Controls**:
+1. Press **V** → SSH launches `main.py` on all stations (auto-initializes motors)
+2. Wait ~30-60 seconds for all motors to home
+3. Press **V** → Start synchronized operations on all stations
+4. Press **V** (while running) → Stop all stations (some return to zero)
+5. Press **V** (after stopped) → Resume operations
+
+**You do NOT need to manually start `main.py` on any station** - `keyboard.py` handles everything!
+
+### Monitoring Individual Stations
+
+To view logs from any station:
+
+```bash
+# SSH from Pi 2
+ssh pi@pi-controller-05.local
+
+# View the log
+tail -f /tmp/motor_controller.log
+```
+
+### Stopping the System
+
+Press **Ctrl+C** in the `keyboard.py` terminal, then kill remote processes:
+
+```bash
+# From Pi 2, for each station:
+ssh pi@pi-controller-03.local "pkill -f main.py"
+ssh pi@pi-controller-04.local "pkill -f main.py"
+# ... etc
+```
 
 ## File Structure
 
@@ -94,19 +180,21 @@ Oriental_CvD_Controller_Murata/
 
 ### Station Table
 
-| Station | Motors | Slave IDs | Keyboard | LED | Notes |
-|---------|--------|-----------|----------|-----|-------|
-| Prologue | 1 | [1] | no | no | |
-| 工程2 | 1 | [1] | **yes** (USB) | no | **Master broadcaster** |
-| 工程3 | 1 | [1] | no | no | |
-| 工程4 | **3** | [1,2,3] | no | no | Daisy-chain RS-485 |
-| 工程5 | 1 | [1] | no | no | |
-| 工程6 | 1 | [1] | no | no | |
-| 工程7 | 1 | [1] | no | **yes** | WS2812 LED strip |
-| 工程8 | 2 | [1,2] | no | no | |
-| 工程9 | 2 | [1,2] | no | no | |
-| 工程10 | 1 | [1] | no | **yes** | WS2812 LED strip |
-| Epilogue | **0** | — | no | no | **Video-only** |
+| Station | Motors | Slave IDs | Return to Zero | LED | Notes |
+|---------|--------|-----------|----------------|-----|-------|
+| Prologue | 1 | [1] | ❌ | no | Simple rotation - stop in place |
+| 工程2 | 1 | [1] | ❌ | no | **Master** - Simple rotation |
+| 工程3 | 1 | [1] | ❌ | no | Simple rotation - stop in place |
+| 工程4 | **3** | [1,2,3] | ❌ | no | Simple rotation (3 motors) |
+| 工程5 | 1 | [1] | ✅ | no | **Amplitude/Phase - returns to 0** |
+| 工程6 | 1 | [1] | ✅ | no | **Amplitude/Phase - returns to 0** |
+| 工程7 | 1 | [1] | ✅ | **yes** | **Amplitude/Phase + LED** |
+| 工程8 | 2 | [1,2] | ✅ | no | **Amplitude/Phase (2 motors)** |
+| 工程9 | 2 | [1,2] | ✅ | no | **Amplitude/Phase (2 motors)** |
+| 工程10 | 1 | [1] | ❌ | **yes** | Simple rotation + LED |
+| Epilogue | **0** | — | — | no | **Video-only** |
+
+**Return to Zero**: When V key is pressed to stop, stations marked ✅ move back to position 0 using absolute positioning. Stations marked ❌ stop in their current position.
 
 ### Example Config (Station 6)
 
