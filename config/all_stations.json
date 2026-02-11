@@ -4,7 +4,7 @@
   "default": {
     "_comment": "Default settings inherited by all stations",
     "serial": {
-      "port": "/dev/tty.usbserial-FT78LMAE", 
+      "port": "/dev/tty.usbserial-FT78LMAE",
       "baudrate": 230400,
       "parity": "N",
       "stopbits": 1
@@ -30,14 +30,18 @@
     "station_name": "工程2",
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ]
+    ],
+    "homing_required": false,
+    "return_to_zero_on_stop": false
   },
 
   "03": {
     "station_name": "工程3",
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ]
+    ],
+    "homing_required": false,
+    "return_to_zero_on_stop": false
   },
 
   "04": {
@@ -46,21 +50,27 @@
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
       {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"},
       {"name": "motor_3", "slave_id": 3, "type": "CVD-28-KR"}
-    ]
+    ],
+    "homing_required": false,
+    "return_to_zero_on_stop": false
   },
 
   "05": {
     "station_name": "工程5",
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ]
+    ],
+    "homing_required": true,
+    "return_to_zero_on_stop": true
   },
 
   "06": {
     "station_name": "工程6",
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ]
+    ],
+    "homing_required": true,
+    "return_to_zero_on_stop": true
   },
 
   "07": {
@@ -68,6 +78,8 @@
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
     ],
+    "homing_required": true,
+    "return_to_zero_on_stop": true,
     "led": {
       "enabled": true,
       "gpio_pin": 18,
@@ -81,7 +93,9 @@
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
       {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
-    ]
+    ],
+    "homing_required": true,
+    "return_to_zero_on_stop": true
   },
 
   "09": {
@@ -89,7 +103,9 @@
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
       {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
-    ]
+    ],
+    "homing_required": true,
+    "return_to_zero_on_stop": true
   },
 
   "10": {
@@ -97,6 +113,8 @@
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
     ],
+    "homing_required": false,
+    "return_to_zero_on_stop": false,
     "led": {
       "enabled": true,
       "gpio_pin": 18,
@@ -107,6 +125,8 @@
 
   "11": {
     "station_name": "工程11 (Video Only)",
-    "motors": []
+    "motors": [],
+    "homing_required": false,
+    "return_to_zero_on_stop": false
   }
 }

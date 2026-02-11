@@ -5,7 +5,7 @@ Thin wrapper around oriental_cvd.py for basic motor commands
 
 import logging
 from drivers.oriental_cvd import OrientalCvdMotor
-from drivers.cvd_define import OutputSignal, InputSignal
+from drivers.cvd_define import OutputSignal, InputSignal, OPMode
 
 logger = logging.getLogger(__name__)
 
@@ -79,53 +79,98 @@ class MotorDriver:
     def start_operation(self, op_no=0):
         """
         Start MEXE operation by number.
-        Uses direct write method (operation # + START bit).
+        For operations 0-7: Use M0-M2 bits + START bit
+        For operations 8+: Would need to use different method (not implemented)
 
         Args:
-            op_no: MEXE operation number (0-255)
+            op_no: MEXE operation number (0-7 supported)
         """
         logger.info(f"Starting operation {op_no} (slave_id={self.slave_id})")
 
-        # Direct method: Write START bit (0x0008) to input command register (0x007D)
-        # For operation 0, this is just 0x0008
-        # For other operations, combine: (op_no & 0x0007) | 0x0008
-        start_cmd = 0x0008  # START bit only (operation 0 assumed for now)
+        if op_no > 7:
+            logger.error(f"Operation numbers > 7 not yet supported (got {op_no})")
+            return False
 
+        # Build command: operation number (bits 0-2) + START bit (bit 3)
+        # Operation 0: 0x0008 (just START)
+        # Operation 1: 0x0009 (M0 + START)
+        # Operation 2: 0x000A (M1 + START)
+        # etc.
+        cmd_value = (op_no & 0x07) | InputSignal.START
+
+        logger.info(f"Sending START command: 0x{cmd_value:04X} (op_no={op_no} encoded in bits 0-2)")
+
+        # Write directly to input command register
         result = self.client.client.write_register(
-            address=0x007D,  # Input command register
-            value=start_cmd,
+            address=0x007D,
+            value=cmd_value,
             slave=self.slave_id
         )
 
         if result.isError():
             logger.error(f"Failed to start operation {op_no}: {result}")
+            return False
         else:
-            logger.info(f"Operation {op_no} started successfully")
+            logger.info(f"✓ Operation {op_no} started successfully")
+
+            # Clear command after a brief delay
+            import time
+            time.sleep(0.05)
+            self.client.client.write_register(
+                address=0x007D,
+                value=0x0000,
+                slave=self.slave_id
+            )
+            return True
+
+    def return_to_zero(self, velocity=2000):
+        """
+        Execute a return-to-zero operation using direct operation.
+        Uses ABSOLUTE positioning mode to move back to position 0.
+
+        Args:
+            velocity: Speed for return motion (pulses/sec), default 2000 (slow/safe)
+        """
+        logger.info(f"Direct operation: return to position 0 at velocity {velocity} (slave_id={self.slave_id})")
+
+        # Use direct operation to move to absolute position 0
+        # This immediately starts the motion without needing to program a data slot
+        self.client.start_direct_operation(
+            data_no=0,
+            position=0,
+            velocity=velocity,
+            startRate=1000,
+            stopRate=1000,
+            mode=OPMode.ABSOLUTE,
+            current=1.0,
+            slave_id=self.slave_id
+        )
+
+        logger.info("Return to zero started via direct operation")
+        return True
 
     def stop(self):
         """Send STOP signal to motor"""
         logger.info(f"Stopping motor (slave_id={self.slave_id})")
 
-        # Direct method: Write STOP bit (0x0020) to input command register
-        result = self.client.client.write_register(
-            address=0x007D,
-            value=0x0020,  # STOP bit
-            slave=self.slave_id
+        # Use existing function to send STOP signal
+        result = self.client.send_input_signal(
+            signal=InputSignal.STOP,
+            slave_id=self.slave_id
         )
 
-        if result.isError():
-            logger.error(f"Failed to stop motor: {result}")
-        else:
+        if result:
             logger.info("Motor stopped successfully")
 
             # Clear command
             import time
             time.sleep(0.1)
-            self.client.client.write_register(
-                address=0x007D,
-                value=0x0000,  # Clear all bits
-                slave=self.slave_id
+            self.client.send_input_signal(
+                signal=InputSignal.OFF,
+                slave_id=self.slave_id
             )
+        else:
+            logger.error(f"Failed to stop motor")
 
     def clear_alarm(self):
         """Clear motor alarm"""
@@ -157,18 +202,8 @@ class MotorDriver:
         Returns:
             True if READY flag is set
         """
-        # Direct method: Read status register (0x007F)
-        result = self.client.client.read_holding_registers(
-            address=0x007F,
-            count=1,
-            slave=self.slave_id
-        )
-
-        if result.isError():
-            return False
-
-        status = result.registers[0]
-        return (status & 0x0001) != 0  # READY bit
+        # Use existing function from oriental_cvd.py
+        return self.client.checkReadyFlag(slave_id=self.slave_id)
 
     def is_moving(self) -> bool:
         """
@@ -177,30 +212,28 @@ class MotorDriver:
         Returns:
             True if MOVE flag is set
         """
-        # Direct method: Read status register (0x007F)
-        result = self.client.client.read_holding_registers(
-            address=0x007F,
-            count=1,
-            slave=self.slave_id
-        )
-
-        if result.isError():
+        # Use existing function from oriental_cvd.py
+        status = self.client.read_output_signal(slave_id=self.slave_id)
+        if status is None:
             return False
-
-        status = result.registers[0]
-        return (status & 0x0004) != 0  # MOVE bit
+        return (status & OutputSignal.MOVE) != 0
 
     def is_in_position(self) -> bool:
         """
         Check if motor has reached target position.
+        Uses AREA0 signal which can be configured for positioning complete in MEXE02.
+        Alternatively, position complete = READY=1 && MOVE=0.
 
         Returns:
-            True if IN_POS flag is set
+            True if in position (READY and not MOVE)
         """
         status = self.client.read_output_signal(slave_id=self.slave_id)
         if status is None:
             return False
-        return (status & OutputSignal.IN_POS) != 0
+        # In position when ready and not moving
+        ready = (status & OutputSignal.READY) != 0
+        moving = (status & OutputSignal.MOVE) != 0
+        return ready and not moving
 
     def get_alarm_status(self) -> bool:
         """
@@ -212,7 +245,7 @@ class MotorDriver:
         status = self.client.read_output_signal(slave_id=self.slave_id)
         if status is None:
             return False
-        return (status & OutputSignal.ALARM) != 0
+        return (status & OutputSignal.ALM_A) != 0
 
     def read_position(self) -> int:
         """
@@ -235,3 +268,34 @@ class MotorDriver:
         from drivers.cvd_define import MonitorCommand
         op_no = self.client.read_monitor(MonitorCommand.RUNNING_DATA_NO, slave_id=self.slave_id)
         return op_no
+
+    def get_detailed_status(self) -> dict:
+        """
+        Read and parse detailed status from register 0x007F.
+
+        Returns:
+            Dict with all status bit values (all 16 bits)
+        """
+        result = self.client.client.read_holding_registers(
+            address=0x007F,
+            count=1,
+            slave=self.slave_id
+        )
+
+        if result.isError():
+            return None
+
+        status = result.registers[0]
+
+        return {
+            "raw_value": f"0x{status:04X}",
+            "MOVE": bool(status & OutputSignal.MOVE),         # Bit 13 - Motor is moving
+            "READY": bool(status & OutputSignal.READY),       # Bit 5 - Ready for next command
+            "ALARM": bool(status & OutputSignal.ALM_A),       # Bit 7 - Alarm active (A-contact)
+            "INFO": bool(status & OutputSignal.INFO),         # Bit 6 - Information occurring
+            "HOME_END": bool(status & OutputSignal.HOME_END), # Bit 4 - Homing complete
+            "SYS_BSY": bool(status & OutputSignal.SYS_BSY),   # Bit 8 - Internal processing
+            "AREA0": bool(status & OutputSignal.AREA0),       # Bit 9 - Area output 0
+            "AREA1": bool(status & OutputSignal.AREA1),       # Bit 10 - Area output 1
+            "TIM": bool(status & OutputSignal.TIM),           # Bit 12 - Timing signal
+        }
