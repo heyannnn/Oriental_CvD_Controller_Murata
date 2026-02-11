@@ -57,12 +57,16 @@ class MotorController:
 
         self.current_operation = None
         self._monitor_task = None
+        self._event_loop = None  # Will be set when async context is available
 
     async def initialize(self):
         """
         Initialize and auto-home motor.
         This is called on system boot.
         """
+        # Save event loop reference for later use from non-async contexts
+        self._event_loop = asyncio.get_running_loop()
+
         logger.info("=" * 70)
         logger.info("Initializing motor controller...")
         logger.info("=" * 70)
@@ -125,46 +129,78 @@ class MotorController:
         # Start operation
         self.driver.start_operation(op_no=op_no)
 
-        # Start monitoring task
-        self._monitor_task = asyncio.create_task(self._monitor_operation())
+        # Start monitoring task (handle both sync and async contexts)
+        # If called from keyboard thread, use saved event loop
+        if self._event_loop is not None:
+            # Schedule in the main event loop (works from any thread)
+            self._monitor_task = asyncio.run_coroutine_threadsafe(self._monitor_operation(), self._event_loop)
+        else:
+            # No saved loop yet - this shouldn't happen after initialize()
+            logger.error("Cannot start monitoring - event loop not available")
+            return
 
     async def _monitor_operation(self):
         """
         Monitor operation until completion.
-        Sends finished callback when MOVE flag clears.
+        Uses RUNNING_DATA_NO register to detect true completion (not just motion stop).
+        This handles operations with dwell times, retracts, or multi-step moves correctly.
         """
         logger.info(f"Monitoring operation {self.current_operation}...")
+        logger.info(f"Callback set: {self._on_finished is not None}")
 
-        # Wait a moment for motion to start
+        # Wait a moment for operation to start
         await asyncio.sleep(0.5)
 
-        # Monitor until motion stops
+        # Monitor until operation completes
         start_time = time.time()
         last_log_time = 0
+        operation_started = False
 
         while True:
+            # Read running operation number from driver
+            running_op = self.driver.read_running_operation()
             moving = self.driver.is_moving()
             ready = self.driver.is_ready()
             in_pos = self.driver.is_in_position()
             position = self.driver.read_position()
             elapsed = time.time() - start_time
 
+            # Check if operation started
+            if not operation_started and running_op == self.current_operation:
+                operation_started = True
+                logger.info(f"Operation {self.current_operation} confirmed started (RUNNING_DATA_NO={running_op})")
+
             # Log status every 0.5 seconds to avoid spam
             if elapsed - last_log_time >= 0.5:
-                logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | Pos: {position:8d} | READY: {ready} | MOVE: {moving} | IN_POS: {in_pos}")
+                logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | Pos: {position:8d} | RUNNING_OP: {running_op} | MOVE: {moving} | IN_POS: {in_pos}")
                 last_log_time = elapsed
 
-            if not moving and elapsed > 1.0:
-                # Motion complete
+            # Detect operation completion: RUNNING_DATA_NO becomes -1
+            if operation_started and running_op == -1:
+                # Operation truly complete (driver says so, not just motion stopped)
                 logger.info(f"✓ Operation {self.current_operation} FINISHED - Final pos: {position} ({elapsed:.1f}s)")
+                logger.info(f"  RUNNING_DATA_NO = -1 (operation complete)")
                 self.state = MotorState.FINISHED
 
                 if self._on_finished:
-                    self._on_finished()
+                    logger.info("Calling on_finished callback")
+                    try:
+                        self._on_finished()
+                    except Exception as e:
+                        logger.error(f"Error in on_finished callback: {e}", exc_info=True)
+                else:
+                    logger.warning("No on_finished callback set!")
 
                 # Return to ready state
                 await asyncio.sleep(0.5)
                 self.state = MotorState.READY
+                break
+
+            # Timeout safety (if operation doesn't start or complete in reasonable time)
+            if elapsed > 300:  # 5 minutes timeout
+                logger.error(f"Operation monitoring timeout after {elapsed:.1f}s")
+                logger.error(f"  RUNNING_DATA_NO = {running_op}, expected 0 or -1")
+                self.state = MotorState.ERROR
                 break
 
             await asyncio.sleep(0.1)
@@ -176,9 +212,18 @@ class MotorController:
 
         # Cancel monitoring task
         if self._monitor_task:
-            self._monitor_task.cancel()
+            try:
+                self._monitor_task.cancel()
+            except Exception as e:
+                logger.debug(f"Could not cancel monitor task: {e}")
 
         self.state = MotorState.READY
+
+    def clear_alarm(self):
+        """Clear motor alarm"""
+        logger.info("Clearing motor alarm...")
+        self.driver.clear_alarm()
+        logger.info("Alarm cleared - motor should be ready")
 
     async def reset_to_home(self):
         """
@@ -217,5 +262,8 @@ class MotorController:
     def close(self):
         """Cleanup"""
         if self._monitor_task:
-            self._monitor_task.cancel()
+            try:
+                self._monitor_task.cancel()
+            except Exception as e:
+                logger.debug(f"Could not cancel monitor task during cleanup: {e}")
         self.driver.close()

@@ -34,6 +34,7 @@ class KeyboardHandler:
         self._on_start = None
         self._on_stop = None
         self._on_reset = None
+        self._on_clear_alarm = None
 
         # State tracking for V key toggle
         self.is_running = False
@@ -55,6 +56,10 @@ class KeyboardHandler:
     def set_on_reset(self, callback):
         """Set callback for RESET/STANDBY (C key)"""
         self._on_reset = callback
+
+    def set_on_clear_alarm(self, callback):
+        """Set callback for CLEAR ALARM (Ctrl key)"""
+        self._on_clear_alarm = callback
 
     def _on_key_press(self, key):
         """Handle key press events"""
@@ -79,12 +84,11 @@ class KeyboardHandler:
                     self._on_reset()
                 self.is_running = False  # Reset state to stopped
 
-            # Ctrl key - Emergency stop
+            # Ctrl key - Clear alarm
             elif key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-                logger.info("Ctrl pressed: EMERGENCY STOP")
-                if self._on_stop:
-                    self._on_stop()
-                self.is_running = False
+                logger.info("Ctrl pressed: CLEAR ALARM")
+                if self._on_clear_alarm:
+                    self._on_clear_alarm()
 
         except AttributeError:
             # Key doesn't have 'char' attribute (special keys)

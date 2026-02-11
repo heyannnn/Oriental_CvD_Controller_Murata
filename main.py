@@ -227,7 +227,8 @@ async def main():
 
     sequence_manager = SequenceManager(
         motor_controller=motor_controller,
-        network_sync=network_sync
+        network_sync=network_sync,
+        config=config
     )
 
     # Wire motor callbacks to sequence manager (if motor exists)
@@ -255,6 +256,7 @@ async def main():
             # Note: Keyboard callbacks run in separate thread, need to schedule in main loop
             keyboard_handler.set_on_start(sequence_manager.on_start_pressed)
             keyboard_handler.set_on_stop(sequence_manager.on_stop_pressed)
+            keyboard_handler.set_on_clear_alarm(sequence_manager.on_clear_alarm_pressed)
 
             # Reset is async, so schedule it in the main event loop
             def on_reset_wrapper():
@@ -296,7 +298,7 @@ async def main():
         logger.info("\nUSB Keyboard Controls:")
         logger.info("  V key   - Toggle start/stop operation")
         logger.info("  C key   - Enter standby mode (return to home)")
-        logger.info("  Ctrl    - Emergency stop (TBD)")
+        logger.info("  Ctrl    - Clear motor alarm")
     else:
         logger.info("\nListening for OSC commands from master station")
 

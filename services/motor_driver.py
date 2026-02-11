@@ -127,6 +127,25 @@ class MotorDriver:
                 slave=self.slave_id
             )
 
+    def clear_alarm(self):
+        """Clear motor alarm"""
+        logger.info(f"Clearing alarm (slave_id={self.slave_id})")
+
+        from drivers.cvd_define import InputSignal
+
+        # Send alarm reset signal
+        result = self.client.send_input_signal(signal=InputSignal.ALM_RST, slave_id=self.slave_id)
+
+        if result:
+            logger.info("Alarm cleared successfully")
+
+            # Clear command after a short delay
+            import time
+            time.sleep(0.1)
+            self.client.send_input_signal(signal=InputSignal.OFF, slave_id=self.slave_id)
+        else:
+            logger.error("Failed to clear alarm")
+
     # ========================================================================
     # Status Queries
     # ========================================================================
@@ -205,3 +224,14 @@ class MotorDriver:
         from drivers.cvd_define import MonitorCommand
         pos = self.client.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=self.slave_id)
         return pos if pos is not None else 0
+
+    def read_running_operation(self) -> int:
+        """
+        Read currently running operation number.
+
+        Returns:
+            Operation number (0-255) if running, -1 if stopped, None on error
+        """
+        from drivers.cvd_define import MonitorCommand
+        op_no = self.client.read_monitor(MonitorCommand.RUNNING_DATA_NO, slave_id=self.slave_id)
+        return op_no

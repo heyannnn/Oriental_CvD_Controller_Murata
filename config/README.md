@@ -49,7 +49,7 @@ If you have a USB keyboard connected to one Pi (e.g., station 02), edit `network
 **Keyboard Controls:**
 - **V key**: Toggle start/stop operation
 - **C key**: Enter standby mode (motors return home)
-- **Ctrl key**: Emergency stop (TBD)
+- **Ctrl key**: Clear motor alarm
 
 **On all other Pis**, set:
 ```json

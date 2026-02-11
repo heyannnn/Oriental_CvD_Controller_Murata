@@ -21,7 +21,8 @@
     },
     "led": {
       "enabled": false
-    }
+    },
+    "loop_delay_sec": 3.0
   },
 
 

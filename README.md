@@ -18,7 +18,9 @@ The master station (typically Station 2) can have a USB keyboard connected for m
 - **C key**: Enter standby mode
   - Motors return to home position
   - Standby video plays
-- **Ctrl key**: Emergency stop (to be defined)
+- **Ctrl key**: Clear motor alarm
+  - Clears any active alarms on the motor driver
+  - Recovers system from error state
 
 The keyboard can be connected to **any station** - just enable `network_master` mode in that station's config. See `config/README.md` for setup instructions.
 
@@ -211,7 +213,7 @@ This:
 #### USB Keyboard Controls (Master Station)
 - **V key**: Toggle start/stop - Press once to start, press again to stop operation
 - **C key**: Standby mode - Motors return home, standby video plays
-- **Ctrl key**: Emergency stop (TBD)
+- **Ctrl key**: Clear alarm - Clears motor alarms and recovers from error state
 
 ## Key Driver Registers (CVD-28-KR)
 

@@ -32,17 +32,23 @@ class SequenceManager:
                                   └────────── (RESET) ──────────┘
     """
 
-    def __init__(self, motor_controller, network_sync):
+    def __init__(self, motor_controller, network_sync, config=None):
         """
         Initialize sequence manager.
 
         Args:
             motor_controller: MotorController instance
             network_sync: NetworkSync instance for OSC
+            config: Station config dict (optional)
         """
         self.motor_controller = motor_controller
         self.network_sync = network_sync
         self.state = SystemState.BOOT
+
+        # Looping configuration
+        self.is_looping = False
+        self.cycle_count = 0
+        self.loop_delay_sec = config.get('loop_delay_sec', 3.0) if config else 3.0
 
         logger.info("Sequence manager initialized")
 
@@ -76,6 +82,7 @@ class SequenceManager:
     def on_motor_finished(self):
         """
         Callback from MotorController when operation finishes.
+        If looping is enabled, wait and restart the operation.
         """
         logger.info("=== OPERATION FINISHED ===")
         self.state = SystemState.FINISHED
@@ -83,9 +90,22 @@ class SequenceManager:
         # Send finished signal to video player
         self.network_sync.send_video_command("finished")
 
-        # Return to ready state
-        self.state = SystemState.READY
-        logger.info("System ready for next operation")
+        # Check if we should loop
+        if self.is_looping:
+            # Schedule next cycle
+            import asyncio
+            if self.motor_controller._event_loop:
+                asyncio.run_coroutine_threadsafe(
+                    self._loop_next_cycle(),
+                    self.motor_controller._event_loop
+                )
+            else:
+                logger.warning("Cannot loop - event loop not available")
+                self.state = SystemState.READY
+        else:
+            # Return to ready state
+            self.state = SystemState.READY
+            logger.info("System ready for next operation")
 
     def on_motor_error(self, error_msg):
         """
@@ -104,13 +124,17 @@ class SequenceManager:
     def on_start_pressed(self):
         """
         START button pressed.
-        Flow: READY → STANDBY → RUNNING
+        Flow: READY → STANDBY → RUNNING (with looping enabled)
         """
         if self.state != SystemState.READY:
             logger.warning(f"Cannot start - system not ready (state={self.state.value})")
             return
 
         logger.info("=== START PRESSED ===")
+
+        # Enable looping mode
+        self.is_looping = True
+        self.cycle_count = 1
 
         # Move to standby
         self.state = SystemState.STANDBY
@@ -123,7 +147,8 @@ class SequenceManager:
         self.network_sync.broadcast_start()
 
         # Start motor operation
-        logger.info("Starting motor operation...")
+        logger.info(f"Starting looping mode (delay: {self.loop_delay_sec}s between cycles)")
+        logger.info(f"=== Starting cycle {self.cycle_count} ===")
         self.state = SystemState.RUNNING
 
         # Start operation 0 (or read from config)
@@ -134,9 +159,13 @@ class SequenceManager:
     def on_stop_pressed(self):
         """
         STOP button pressed.
-        Emergency stop all motors.
+        Emergency stop all motors and disable looping.
         """
         logger.info("=== STOP PRESSED ===")
+
+        # Disable looping mode
+        self.is_looping = False
+        logger.info("Looping mode disabled")
 
         # Stop motor
         self.motor_controller.stop()
@@ -150,12 +179,46 @@ class SequenceManager:
         self.state = SystemState.STOPPED
         logger.info("System stopped")
 
+    async def _loop_next_cycle(self):
+        """
+        Internal method to handle looping delay and restart.
+        Called from on_motor_finished when looping is enabled.
+        """
+        import asyncio
+
+        # Wait for the configured delay
+        logger.info(f"Waiting {self.loop_delay_sec}s before next cycle...")
+        for remaining in range(int(self.loop_delay_sec), 0, -1):
+            if not self.is_looping:
+                logger.info("Looping cancelled during delay")
+                self.state = SystemState.READY
+                return
+            logger.info(f"  {remaining}s...")
+            await asyncio.sleep(1.0)
+
+        # Check if looping is still enabled (user might have pressed stop during delay)
+        if not self.is_looping:
+            logger.info("Looping cancelled")
+            self.state = SystemState.READY
+            return
+
+        # Increment cycle count and restart
+        self.cycle_count += 1
+        logger.info(f"=== Starting cycle {self.cycle_count} ===")
+        self.state = SystemState.RUNNING
+
+        # Start operation 0 again
+        self.motor_controller.start_operation(op_no=0)
+
     async def on_reset_pressed(self):
         """
         RESET button pressed.
         Return to home and ready state.
         """
         logger.info("=== RESET PRESSED ===")
+
+        # Disable looping
+        self.is_looping = False
 
         # Stop everything first
         self.motor_controller.stop()
@@ -168,6 +231,23 @@ class SequenceManager:
         await self.motor_controller.reset_to_home()
 
         # MotorController will callback on_motor_ready when done
+
+    def on_clear_alarm_pressed(self):
+        """
+        CLEAR ALARM button pressed (Ctrl key).
+        Clear motor alarm and attempt recovery.
+        """
+        logger.info("=== CLEAR ALARM PRESSED ===")
+
+        if self.motor_controller:
+            self.motor_controller.clear_alarm()
+
+            # If in error state, try to return to ready
+            if self.state == SystemState.ERROR:
+                self.state = SystemState.READY
+                logger.info("System recovered from error state")
+        else:
+            logger.warning("No motor controller - cannot clear alarm")
 
     # ========================================================================
     # OSC Network Commands (received from station 2)

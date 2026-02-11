@@ -4,7 +4,7 @@
     "Set 'enabled: true' on the Pi that has the USB keyboard connected",
     "Set 'enabled: false' (or delete this file) on all other Pis",
     "The keyboard can be on ANY station - it doesn't have to be station 02",
-    "Keyboard keys: V (start/stop toggle), C (standby), Ctrl (emergency/TBD)"
+    "Keyboard keys: V (start/stop toggle), C (standby), Ctrl (clear alarm)"
   ],
 
   "enabled": true,
@@ -28,7 +28,7 @@
     "keys": {
       "start_stop": "v",
       "standby": "c",
-      "emergency": "ctrl"
+      "clear_alarm": "ctrl"
     }
   }
 }
