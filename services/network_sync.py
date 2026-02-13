@@ -61,6 +61,7 @@ class NetworkSync:
         self.dispatcher.map("/start", self._handle_start)
         self.dispatcher.map("/stop", self._handle_stop)
         self.dispatcher.map("/reset", self._handle_reset)
+        self.dispatcher.map("/clear_alarm", self._handle_clear_alarm)
 
         # Keyboard control commands
         self.dispatcher.map("/control/launch", self._handle_launch)
@@ -75,6 +76,7 @@ class NetworkSync:
         self._on_stop = None
         self._on_reset = None
         self._on_launch = None
+        self._on_clear_alarm = None
 
     def set_on_start(self, callback):
         """Set callback for START command"""
@@ -91,6 +93,10 @@ class NetworkSync:
     def set_on_launch(self, callback):
         """Set callback for LAUNCH command"""
         self._on_launch = callback
+
+    def set_on_clear_alarm(self, callback):
+        """Set callback for CLEAR_ALARM command"""
+        self._on_clear_alarm = callback
 
     def start_listener(self):
         """Start OSC server in background thread"""
@@ -149,6 +155,19 @@ class NetworkSync:
             except Exception as e:
                 logger.error(f"Failed to send RESET to {ip}: {e}")
 
+    def broadcast_clear_alarm(self):
+        """Broadcast CLEAR_ALARM command to all target stations"""
+        if not self.is_sender:
+            return
+
+        logger.info("Broadcasting CLEAR_ALARM to all stations")
+        for ip in self.target_ips:
+            try:
+                client = udp_client.SimpleUDPClient(ip, self.send_port)
+                client.send_message("/clear_alarm", [])
+            except Exception as e:
+                logger.error(f"Failed to send CLEAR_ALARM to {ip}: {e}")
+
     def _handle_start(self, address, *args):
         """OSC handler for /start (inter-station broadcast)"""
         logger.info("Received START command via OSC")
@@ -184,6 +203,12 @@ class NetworkSync:
         logger.info("Received STOP command from keyboard controller")
         if self._on_stop:
             self._on_stop()
+
+    def _handle_clear_alarm(self, address, *args):
+        """OSC handler for /clear_alarm (inter-station broadcast)"""
+        logger.info("Received CLEAR_ALARM command via OSC")
+        if self._on_clear_alarm:
+            self._on_clear_alarm()
 
     # ========================================================================
     # Video Player Commands

@@ -45,6 +45,7 @@ class MotorController:
         self._on_ready = on_ready
         self._on_finished = on_finished
         self._on_error = on_error
+        self._on_return_to_zero_complete = None  # Callback when return to zero finishes
 
         # Return to zero behavior
         self.return_to_zero_on_stop = config.get('return_to_zero_on_stop', False)
@@ -88,8 +89,16 @@ class MotorController:
                 self._on_error(f"Connection failed: {e}")
             return
 
-        # Start homing (if required)
-        if self.homing_required:
+        # Check if motor needs homing
+        # Motor needs homing if:
+        # 1. homing_required config is True, OR
+        # 2. HOME_END flag is False (motor was powered off/on or lost position)
+        home_end_status = self.driver.is_home_complete()
+        needs_homing = self.homing_required or not home_end_status
+
+        if needs_homing:
+            if not home_end_status:
+                logger.info("⚠ Motor HOME_END flag is False - motor needs homing")
             logger.info("Starting automatic homing to position 0...")
             self.state = MotorState.HOMING
 
@@ -113,9 +122,9 @@ class MotorController:
                 if self._on_error:
                     self._on_error(f"Homing failed: {e}")
         else:
-            logger.info("Homing not required for this station - skipping")
+            logger.info("Motor already homed (HOME_END flag is set)")
             logger.info("=" * 70)
-            logger.info("✓ Motor READY (no homing)")
+            logger.info("✓ Motor READY (no homing needed)")
             logger.info("=" * 70)
             self.state = MotorState.READY
 
@@ -158,8 +167,8 @@ class MotorController:
     async def _monitor_operation(self):
         """
         Monitor operation until completion.
-        Uses RUNNING_DATA_NO register to detect true completion (not just motion stop).
-        This handles operations with dwell times, retracts, or multi-step moves correctly.
+        Detects completion when MOVE flag goes False (motor stops moving).
+        This is better for video synchronization - we know exactly when motion ends.
         """
         logger.info(f"Monitoring operation {self.current_operation}...")
         logger.info(f"Callback set: {self._on_finished is not None}")
@@ -171,9 +180,10 @@ class MotorController:
         start_time = time.time()
         last_log_time = 0
         operation_started = False
+        was_moving = False
 
         while True:
-            # Read running operation number from driver
+            # Read motor status
             running_op = self.driver.read_running_operation()
             moving = self.driver.is_moving()
             ready = self.driver.is_ready()
@@ -181,21 +191,26 @@ class MotorController:
             position = self.driver.read_position()
             elapsed = time.time() - start_time
 
-            # Check if operation started
-            if not operation_started and running_op == self.current_operation:
+            # Check if operation started (motor started moving)
+            if not operation_started and moving:
                 operation_started = True
-                logger.info(f"Operation {self.current_operation} confirmed started (RUNNING_DATA_NO={running_op})")
+                was_moving = True
+                logger.info(f"✓ Operation {self.current_operation} STARTED - Motor is moving (MOVE=True)")
+
+            # Track if motor was moving
+            if moving:
+                was_moving = True
 
             # Log status every 0.5 seconds to avoid spam
             if elapsed - last_log_time >= 0.5:
                 logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | Pos: {position:8d} | RUNNING_OP: {running_op} | MOVE: {moving} | IN_POS: {in_pos}")
                 last_log_time = elapsed
 
-            # Detect operation completion: RUNNING_DATA_NO becomes -1
-            if operation_started and running_op == -1:
-                # Operation truly complete (driver says so, not just motion stopped)
-                logger.info(f"✓ Operation {self.current_operation} FINISHED - Final pos: {position} ({elapsed:.1f}s)")
-                logger.info(f"  RUNNING_DATA_NO = -1 (operation complete)")
+            # Detect operation completion: MOVE flag goes False after motor was moving
+            if operation_started and was_moving and not moving:
+                # Motor stopped moving - operation complete
+                logger.info(f"✓ Operation {self.current_operation} FINISHED - Motor stopped (MOVE=False)")
+                logger.info(f"  Final position: {position} | Duration: {elapsed:.1f}s")
                 self.state = MotorState.FINISHED
 
                 if self._on_finished:
@@ -215,7 +230,66 @@ class MotorController:
             # Timeout safety (if operation doesn't start or complete in reasonable time)
             if elapsed > 300:  # 5 minutes timeout
                 logger.error(f"Operation monitoring timeout after {elapsed:.1f}s")
-                logger.error(f"  RUNNING_DATA_NO = {running_op}, expected 0 or -1")
+                logger.error(f"  MOVE = {moving}, operation_started = {operation_started}")
+                self.state = MotorState.ERROR
+                break
+
+            await asyncio.sleep(0.1)
+
+    async def _monitor_return_to_zero(self):
+        """
+        Monitor return-to-zero operation until completion.
+        Detects completion when MOVE flag goes False.
+        """
+        logger.info("Monitoring return to zero...")
+
+        # Wait a moment for motion to start
+        await asyncio.sleep(0.3)
+
+        start_time = time.time()
+        last_log_time = 0
+        motion_started = False
+        was_moving = False
+
+        while True:
+            # Read motor status
+            moving = self.driver.is_moving()
+            position = self.driver.read_position()
+            elapsed = time.time() - start_time
+
+            # Check if motion started
+            if not motion_started and moving:
+                motion_started = True
+                was_moving = True
+                logger.info("Return to zero started - Motor is moving")
+
+            # Track if motor was moving
+            if moving:
+                was_moving = True
+
+            # Log status every 0.5 seconds
+            if elapsed - last_log_time >= 0.5:
+                logger.info(f"Return to zero: {elapsed:.1f}s | Pos: {position:8d} | MOVE: {moving}")
+                last_log_time = elapsed
+
+            # Detect completion: MOVE flag goes False
+            if motion_started and was_moving and not moving:
+                logger.info(f"✓ Return to zero COMPLETE - Motor at position: {position} ({elapsed:.1f}s)")
+
+                # Call callback if set
+                if self._on_return_to_zero_complete:
+                    logger.info("Calling on_return_to_zero_complete callback")
+                    try:
+                        self._on_return_to_zero_complete()
+                    except Exception as e:
+                        logger.error(f"Error in on_return_to_zero_complete callback: {e}", exc_info=True)
+
+                self.state = MotorState.READY
+                break
+
+            # Timeout safety
+            if elapsed > 120:  # 2 minutes timeout
+                logger.error(f"Return to zero timeout after {elapsed:.1f}s")
                 self.state = MotorState.ERROR
                 break
 
@@ -246,9 +320,19 @@ class MotorController:
             time.sleep(0.3)  # Brief pause to ensure motor is stopped
             logger.info("Returning to position 0 via direct operation...")
             self.driver.return_to_zero(velocity=1000)  # Slow speed for safety
-            # Note: Motor will move to position 0, we stay in READY state
 
-        self.state = MotorState.READY
+            # Start monitoring task to detect when return-to-zero completes
+            if self._event_loop is not None:
+                self._monitor_task = asyncio.run_coroutine_threadsafe(
+                    self._monitor_return_to_zero(),
+                    self._event_loop
+                )
+                logger.info("Return to zero monitoring started")
+            else:
+                logger.warning("Cannot monitor return to zero - event loop not available")
+                self.state = MotorState.READY
+        else:
+            self.state = MotorState.READY
 
     def clear_alarm(self):
         """Clear motor alarm"""

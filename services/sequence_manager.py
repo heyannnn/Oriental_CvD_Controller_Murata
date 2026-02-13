@@ -117,6 +117,17 @@ class SequenceManager:
         # Send error to video player
         self.network_sync.send_video_command("error", {"message": error_msg})
 
+    def on_return_to_zero_complete(self):
+        """
+        Callback from MotorController when return-to-zero motion completes.
+        This is called after stop() for stations with return_to_zero_on_stop enabled.
+        """
+        logger.info("=== RETURN TO ZERO COMPLETE ===")
+        logger.info("Motor has returned to home position (0)")
+
+        # Send finished signal to video player (optional, for video sync)
+        self.network_sync.send_video_command("returned_to_zero")
+
     # ========================================================================
     # Keyboard Commands (from KeyboardHandler)
     # ========================================================================

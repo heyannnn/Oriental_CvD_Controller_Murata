@@ -302,17 +302,17 @@ class OrientalCvdMotor:
             signal = InputSignal.RV_POS  # RV-JOG ON
         else:
             signal = InputSignal.OFF  # 停止
-        
-        self.send_input_signal(signal=signal, device_id=slave_id)
+
+        self.send_input_signal(signal=signal, slave_id=slave_id)
 
     def send_start_signal(self, slave_id=1):
-        self.send_input_signal(signal=InputSignal.START, device_id=slave_id)
+        self.send_input_signal(signal=InputSignal.START, slave_id=slave_id)
 
     def send_stop_signal(self, slave_id=1):
-        self.send_input_signal(signal=InputSignal.STOP, device_id=slave_id)
+        self.send_input_signal(signal=InputSignal.STOP, slave_id=slave_id)
 
     def send_signal_reset(self, slave_id=1):
-        self.send_input_signal(signal=InputSignal.OFF, device_id=slave_id)
+        self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
     
     
     def set_operation_no(self, data_no=0, slave_id=1):
@@ -337,12 +337,12 @@ class OrientalCvdMotor:
 
 
     def set_operation_data(self, data_no=0, position=0, velocity=2000, startRate=1000, stopRate=1000, mode:OPMode=OPMode.ABSOLUTE, current=1.0, slave_id=1):
-        
+
         # 運転データNo.の選択
-        self.set_operation_no(data_no=data_no, device_id=slave_id)
+        self.set_operation_no(data_no=data_no, slave_id=slave_id)
 
         data = self.make_operation_data(position=position, velocity=velocity, startRate=startRate, stopRate=stopRate, mode=mode, current=current)
-        
+
         self.client.write_registers(
             address=self.get_operation_data_base_address(data_no),
             values=data,
@@ -386,18 +386,18 @@ class OrientalCvdMotor:
             return status
     
     def checkReadyFlag(self, slave_id=1) -> bool:
-        status = self.read_output_signal(device_id=slave_id)
+        status = self.read_output_signal(slave_id=slave_id)
         if status is None:
             return False
-        
+
         ready_flag = (status & OutputSignal.READY) != 0
         return ready_flag
-    
+
     def checkHomeEndFlag(self, slave_id=1) -> bool:
-        status = self.read_output_signal(device_id=slave_id)
+        status = self.read_output_signal(slave_id=slave_id)
         if status is None:
             return False
-        
+
         ready_flag = (status & OutputSignal.HOME_END) != 0
         return ready_flag
 
@@ -405,16 +405,16 @@ class OrientalCvdMotor:
         b = False
         startTime = time.time()
         while True:
-            b = self.checkHomeEndFlag(device_id=slave_id)
+            b = self.checkHomeEndFlag(slave_id=slave_id)
             elapsed = time.time() - startTime
 
             # Read current position for monitoring
-            position = self.read_monitor(MonitorCommand.COMMAND_POSITION, device_id=slave_id)
+            position = self.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=slave_id)
             if position is None:
                 position = 0
 
             # Read status flags
-            status = self.read_output_signal(device_id=slave_id)
+            status = self.read_output_signal(slave_id=slave_id)
             ready_flag = (status & OutputSignal.READY) != 0 if status else False
             move_flag = (status & OutputSignal.MOVE) != 0 if status else False
 
@@ -432,22 +432,22 @@ class OrientalCvdMotor:
     """
     async def start_homing_async(self, timeout=100, slave_id=1):
         print("Homing started...")
-        self.send_input_signal(signal=InputSignal.HOME, device_id=slave_id)
+        self.send_input_signal(signal=InputSignal.HOME, slave_id=slave_id)
 
         try:
-            await asyncio.wait_for(self._wait_homing_complete(device_id=slave_id), timeout=timeout)
+            await asyncio.wait_for(self._wait_homing_complete(slave_id=slave_id), timeout=timeout)
 
             # Read final position
-            final_position = self.read_monitor(MonitorCommand.COMMAND_POSITION, device_id=slave_id)
+            final_position = self.read_monitor(MonitorCommand.COMMAND_POSITION, slave_id=slave_id)
             if final_position is None:
                 final_position = 0
 
             print(f"Homing completed successfully. Final position: {final_position}")
-            self.send_input_signal(signal=InputSignal.OFF, device_id=slave_id)
+            self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
 
         except asyncio.TimeoutError:
             print("Homing operation timed out.")
-            self.send_input_signal(signal=InputSignal.OFF, device_id=slave_id)
+            self.send_input_signal(signal=InputSignal.OFF, slave_id=slave_id)
 
         except Exception as e:
             print(f"Error during homing operation: {e}")

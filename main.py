@@ -236,11 +236,13 @@ async def main():
         motor_controller._on_ready = sequence_manager.on_motor_ready
         motor_controller._on_finished = sequence_manager.on_motor_finished
         motor_controller._on_error = sequence_manager.on_motor_error
+        motor_controller._on_return_to_zero_complete = sequence_manager.on_return_to_zero_complete
 
     # Wire network callbacks to sequence manager
     network_sync.set_on_start(sequence_manager.on_network_start)
     network_sync.set_on_stop(sequence_manager.on_network_stop)
     network_sync.set_on_reset(lambda: asyncio.create_task(sequence_manager.on_network_reset()))
+    network_sync.set_on_clear_alarm(sequence_manager.on_clear_alarm_pressed)
 
     # ========================================================================
     # Initialize Keyboard Handler (if enabled in config)

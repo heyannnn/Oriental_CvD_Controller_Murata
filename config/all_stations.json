@@ -31,8 +31,8 @@
     "motors": [
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
     ],
-    "homing_required": true,
-    "return_to_zero_on_stop": true
+    "homing_required": false,
+    "return_to_zero_on_stop": false
   },
 
   "03": {
