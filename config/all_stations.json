@@ -10,8 +10,8 @@
       "stopbits": 1
     },
     "network": {
-      "listen_port": 9010,
-      "send_port": 9011,
+      "listen_port": 10000,
+      "send_port": 10001,
       "video_player_ip": "127.0.0.1",
       "video_player_port": 9000
     },

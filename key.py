@@ -36,16 +36,16 @@ logger = logging.getLogger(__name__)
 
 # All station hostnames and ports
 STATIONS = {
-    "02": {"host": "pi-controller-02.local", "port": 9010},
-    "03": {"host": "pi-controller-03.local", "port": 9010},
-    "04": {"host": "pi-controller-04.local", "port": 9010},
-    "05": {"host": "pi-controller-05.local", "port": 9010},
-    "06": {"host": "pi-controller-06.local", "port": 9010},
-    "07": {"host": "pi-controller-07.local", "port": 9010},
-    "08": {"host": "pi-controller-08.local", "port": 9010},
-    "09": {"host": "pi-controller-09.local", "port": 9010},
-    "10": {"host": "pi-controller-10.local", "port": 9010},
-    "11": {"host": "pi-controller-11.local", "port": 9010},
+    "02": {"host": "pi-controller-02.local", "port": 10000},
+    "03": {"host": "pi-controller-03.local", "port": 10000},
+    "04": {"host": "pi-controller-04.local", "port": 10000},
+    "05": {"host": "pi-controller-05.local", "port": 10000},
+    "06": {"host": "pi-controller-06.local", "port": 10000},
+    "07": {"host": "pi-controller-07.local", "port": 10000},
+    "08": {"host": "pi-controller-08.local", "port": 10000},
+    "09": {"host": "pi-controller-09.local", "port": 10000},
+    "10": {"host": "pi-controller-10.local", "port": 10000},
+    "11": {"host": "pi-controller-11.local", "port": 10000},
 }
 
 # ============================================================================

@@ -124,7 +124,7 @@ motor_controller = None
 sequence_manager = None
 network_sync = None
 keyboard_handler = None
-
+video_player_process = None
 
 # ============================================================================
 # Signal Handlers
@@ -143,6 +143,10 @@ def shutdown(signum, frame):
 
     if keyboard_handler:
         keyboard_handler.close()
+
+    if video_player_process:
+        video_player_process.terminate()
+        logger.info("Video player stopped")
 
     logger.info("Shutdown complete")
     sys.exit(0)
@@ -196,6 +200,22 @@ async def main():
     # Setup signal handlers
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
+
+    # ========================================================================
+    # Start Video Player
+    # ========================================================================
+    logger.info("\n[0/4] Starting video player...")
+    import subprocess
+
+    video_player_process = subprocess.Popen(
+        ["python3", "osc_mpv_playlist.py", "--media-dir", "/home/user/osc-mp4-player/"],
+        cwd="/home/user/osc-mp4-player/",
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+
+    await asyncio.sleep(2)
+    logger.info("✓ Video player started")
 
     # ========================================================================
     # Initialize Network Sync

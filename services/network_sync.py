@@ -41,14 +41,14 @@ class NetworkSync:
 
         net_config = config.get('network', {})
 
-        self.listen_port = net_config.get('listen_port', 9000)
-        self.send_port = net_config.get('send_port', 9001)
+        self.listen_port = net_config.get('listen_port', 10000)
+        self.send_port = net_config.get('send_port', 10001)
         self.is_sender = net_config.get('is_sender', False)
         self.target_ips = net_config.get('target_ips', [])
 
         # Video player OSC config
         self.video_player_ip = net_config.get('video_player_ip', '127.0.0.1')
-        self.video_player_port = net_config.get('video_player_port', 9002)
+        self.video_player_port = net_config.get('video_player_port', 9000)
 
         # OSC client (for broadcasting)
         self.client = None
@@ -228,12 +228,12 @@ class NetworkSync:
         try:
             client = udp_client.SimpleUDPClient(self.video_player_ip, self.video_player_port)
 
-            if params:
+            if command in ("start", "standby"):
                 # Send as /video/<command> with parameters
-                client.send_message(f"/video/{command}", list(params.values()))
-            else:
+                client.send_message("/playlist/load", ["./NormalOperation.csv"])
+            elif command == "stop":
                 # Send as /video/<command>
-                client.send_message(f"/video/{command}", [])
+                client.send_message("/playlist/load", ["./Waiting.csv"])
 
             logger.info(f"Sent video command: /video/{command}")
 

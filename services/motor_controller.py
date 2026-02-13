@@ -93,36 +93,41 @@ class MotorController:
         # Motor needs homing if:
         # 1. homing_required config is True, OR
         # 2. HOME_END flag is False (motor was powered off/on or lost position)
-        home_end_status = self.driver.is_home_complete()
-        needs_homing = self.homing_required or not home_end_status
-
-        if needs_homing:
-            if not home_end_status:
-                logger.info("⚠ Motor HOME_END flag is False - motor needs homing")
-            logger.info("Starting automatic homing to position 0...")
-            self.state = MotorState.HOMING
-
-            try:
-                await self.driver.start_homing(timeout=100)
-
-                # Read final position to verify
-                final_pos = self.driver.read_position()
+        if self.homing_required:
+            # Check if already homed
+            if self.driver.is_home_complete():
+                logger.info("Motor already homed (HOME_END=True) - skipping homing")
                 logger.info("=" * 70)
-                logger.info(f"✓ Homing complete - Motor READY at position: {final_pos}")
+                logger.info("✓ Motor READY (already homed)")
                 logger.info("=" * 70)
-
                 self.state = MotorState.READY
 
                 if self._on_ready:
                     self._on_ready()
+            else:
+                logger.info("HOME_END=False - Starting homing...")
+                self.state = MotorState.HOMING
 
-            except Exception as e:
-                logger.error(f"✗ Homing failed: {e}")
-                self.state = MotorState.ERROR
-                if self._on_error:
-                    self._on_error(f"Homing failed: {e}")
+                try:
+                    await self.driver.start_homing(timeout=100)
+
+                    final_pos = self.driver.read_position()
+                    logger.info("=" * 70)
+                    logger.info(f"✓ Homing complete - Motor READY at position: {final_pos}")
+                    logger.info("=" * 70)
+
+                    self.state = MotorState.READY
+
+                    if self._on_ready:
+                        self._on_ready()
+
+                except Exception as e:
+                    logger.error(f"✗ Homing failed: {e}")
+                    self.state = MotorState.ERROR
+                    if self._on_error:
+                        self._on_error(f"Homing failed: {e}")
         else:
-            logger.info("Motor already homed (HOME_END flag is set)")
+            logger.info("Homing not required for this station - skipping")
             logger.info("=" * 70)
             logger.info("✓ Motor READY (no homing needed)")
             logger.info("=" * 70)
@@ -319,7 +324,7 @@ class MotorController:
             import time
             time.sleep(0.3)  # Brief pause to ensure motor is stopped
             logger.info("Returning to position 0 via direct operation...")
-            self.driver.return_to_zero(velocity=1000)  # Slow speed for safety
+            self.driver.return_to_zero(velocity=5000)  # Slow speed for safety
 
             # Start monitoring task to detect when return-to-zero completes
             if self._event_loop is not None:
