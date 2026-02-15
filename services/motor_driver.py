@@ -123,7 +123,7 @@ class MotorDriver:
             )
             return True
 
-    def return_to_zero(self, velocity=2000):
+    def return_to_zero(self, velocity=5000):
         """
         Execute a return-to-zero operation using direct operation.
         Uses ABSOLUTE positioning mode to move back to position 0.

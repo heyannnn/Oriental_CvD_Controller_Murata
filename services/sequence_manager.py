@@ -200,13 +200,7 @@ class SequenceManager:
 
         # Wait for the configured delay
         logger.info(f"Waiting {self.loop_delay_sec}s before next cycle...")
-        for remaining in range(int(self.loop_delay_sec), 0, -1):
-            if not self.is_looping:
-                logger.info("Looping cancelled during delay")
-                self.state = SystemState.READY
-                return
-            logger.info(f"  {remaining}s...")
-            await asyncio.sleep(1.0)
+        await asyncio.sleep(self.loop_delay_sec)
 
         # Check if looping is still enabled (user might have pressed stop during delay)
         if not self.is_looping:

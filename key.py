@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Keyboard Control Script for Multi-Station System
-Runs on master Pi to control all stations via OSC
+Runs on master Pi (Pi-02) to control all stations via OSC
 
 Usage:
     python key.py
@@ -11,13 +11,19 @@ Controls:
     Ctrl+any - Clear alarm
     Ctrl+C - Exit
 
+This script will:
+    1. SSH into all Pis and launch main.py automatically
+    2. Wait for all stations to initialize
+    3. Listen for keyboard input to send OSC commands
+
 Requirements:
-    - All stations must have main.py running (auto-start via systemd)
+    - sshpass installed: sudo apt install sshpass
     - Network connectivity to all station Pis
 """
 
 import logging
 import asyncio
+import subprocess
 import readchar
 from pythonosc import udp_client
 
@@ -34,6 +40,11 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ============================================================================
 
+# SSH credentials (same for all Pis)
+SSH_USER = "user"
+SSH_PASSWORD = "fukuimurata"
+MAIN_PY_PATH = "/home/user/Desktop/ORIENTAL_CVD_CONTROLLER_MURATA"
+
 # All station hostnames and ports
 STATIONS = {
     "02": {"host": "pi-controller-02.local", "port": 10000},
@@ -47,6 +58,9 @@ STATIONS = {
     "10": {"host": "pi-controller-10.local", "port": 10000},
     "11": {"host": "pi-controller-11.local", "port": 10000},
 }
+
+# Track SSH processes for cleanup
+ssh_processes = []
 
 # ============================================================================
 # OSC Clients
@@ -65,6 +79,76 @@ def initialize_osc_clients():
             logger.info(f"OSC client created for station {station_id} ({config['host']}:{config['port']})")
         except Exception as e:
             logger.error(f"Failed to create OSC client for station {station_id}: {e}")
+
+
+# ============================================================================
+# SSH Launch Functions
+# ============================================================================
+
+def launch_all_stations():
+    """Launch main.py on all stations via SSH"""
+    global ssh_processes
+
+    logger.info("=" * 70)
+    logger.info("LAUNCHING main.py ON ALL STATIONS")
+    logger.info("=" * 70)
+
+    for station_id, config in STATIONS.items():
+        host = config["host"]
+
+        try:
+            # SSH command to start main.py in background
+            # Activate venv first, then run main.py
+            # Set DISPLAY=:0 so video player can access the screen
+            # Using nohup so it keeps running after SSH disconnects
+            ssh_cmd = [
+                "sshpass", "-p", SSH_PASSWORD,
+                "ssh", "-o", "StrictHostKeyChecking=no",
+                f"{SSH_USER}@{host}",
+                f"cd {MAIN_PY_PATH} && source venv/bin/activate && export DISPLAY=:0 && nohup python main.py > /tmp/main_{station_id}.log 2>&1 &"
+            ]
+
+            logger.info(f"Launching station {station_id} ({host})...")
+            process = subprocess.Popen(
+                ssh_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            ssh_processes.append(process)
+            logger.info(f"✓ Station {station_id} launch command sent")
+
+        except Exception as e:
+            logger.error(f"✗ Failed to launch station {station_id}: {e}")
+
+    logger.info("=" * 70)
+    logger.info(f"Launch commands sent to {len(STATIONS)} stations")
+    logger.info("Waiting 10 seconds for all stations to initialize...")
+    logger.info("=" * 70)
+
+
+def stop_all_stations():
+    """Stop main.py and video player on all stations via SSH"""
+    logger.info("=" * 70)
+    logger.info("STOPPING main.py AND video player ON ALL STATIONS")
+    logger.info("=" * 70)
+
+    for station_id, config in STATIONS.items():
+        host = config["host"]
+
+        try:
+            # SSH command to kill main.py and video player
+            ssh_cmd = [
+                "sshpass", "-p", SSH_PASSWORD,
+                "ssh", "-o", "StrictHostKeyChecking=no",
+                f"{SSH_USER}@{host}",
+                "pkill -f 'python main.py'; pkill -f 'osc_mpv_playlist'"
+            ]
+
+            subprocess.run(ssh_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info(f"✓ Station {station_id} stopped")
+
+        except Exception as e:
+            logger.error(f"✗ Failed to stop station {station_id}: {e}")
 
 # ============================================================================
 # OSC Commands
@@ -172,20 +256,24 @@ async def main():
     logger.info("Multi-Station Keyboard Controller - Master Pi")
     logger.info("=" * 70)
 
+    # Launch main.py on all stations via SSH
+    launch_all_stations()
+
+    # Wait for stations to initialize
+    await asyncio.sleep(10)
+
     # Initialize OSC clients
     initialize_osc_clients()
 
     logger.info("\n" + "=" * 70)
-    logger.info("IMPORTANT: Ensure all stations have main.py running!")
-    logger.info("  - Use systemd auto-start on each Pi")
-    logger.info("  - Or manually start: python main.py on each Pi")
+    logger.info("All stations should now be running!")
     logger.info("=" * 70)
 
     logger.info("\n" + "=" * 70)
     logger.info("Keyboard Controls:")
     logger.info("  V key - Start/Stop toggle")
     logger.info("  Ctrl+any - Clear alarm on all stations")
-    logger.info("  Ctrl+C - Exit this program")
+    logger.info("  Ctrl+C - Exit and stop all stations")
     logger.info("=" * 70 + "\n")
 
     # Create keyboard controller
@@ -197,8 +285,14 @@ async def main():
 
     except KeyboardInterrupt:
         logger.info("\nCtrl+C detected - shutting down")
-        controller.stop()
-        logger.info("Shutdown complete")
+
+    # Stop all stations when exiting
+    controller.stop()
+    stop_all_stations()
+    logger.info("Shutdown complete")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass  # Already handled in main()

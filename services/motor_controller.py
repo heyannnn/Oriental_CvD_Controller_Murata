@@ -228,12 +228,12 @@ class MotorController:
                     logger.warning("No on_finished callback set!")
 
                 # Return to ready state
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.0)
                 self.state = MotorState.READY
                 break
 
             # Timeout safety (if operation doesn't start or complete in reasonable time)
-            if elapsed > 300:  # 5 minutes timeout
+            if elapsed > 60000:  # 1000 minutes timeout
                 logger.error(f"Operation monitoring timeout after {elapsed:.1f}s")
                 logger.error(f"  MOVE = {moving}, operation_started = {operation_started}")
                 self.state = MotorState.ERROR
