@@ -1,6 +1,7 @@
 """
 Motor Driver - Low-level Modbus wrapper for CVD-28-KR
 Thin wrapper around oriental_cvd.py for basic motor commands
+Supports shared connections for motors on the same serial port.
 """
 
 import logging
@@ -9,34 +10,86 @@ from drivers.cvd_define import OutputSignal, InputSignal, OPMode
 
 logger = logging.getLogger(__name__)
 
+# Shared connection pool - one connection per serial port
+_shared_clients = {}
+_shared_client_refs = {}  # Reference count for each port
+
 
 class MotorDriver:
     """
     Low-level motor driver interface.
     Provides simple command methods without state management.
+    Supports shared connections for motors on the same RS485 bus.
     """
 
-    def __init__(self, port, slave_id=1):
+    def __init__(self, port, slave_id=1, shared_client=None):
         """
         Initialize motor driver.
 
         Args:
             port: Serial port (e.g., /dev/ttyUSB0)
             slave_id: Modbus slave ID (1-247)
+            shared_client: Optional shared OrientalCvdMotor instance
         """
         self.port = port
         self.slave_id = slave_id
-        self.client = OrientalCvdMotor(port=port)
+        self._owns_client = False  # Whether this instance owns the client
+
+        if shared_client is not None:
+            # Use provided shared client
+            self.client = shared_client
+            self._owns_client = False
+        else:
+            # Will be set in connect()
+            self.client = None
 
     def connect(self):
-        """Connect to motor driver via Modbus"""
-        self.client.connect()
-        logger.info(f"Motor driver connected (slave_id={self.slave_id})")
+        """Connect to motor driver via Modbus (uses shared connection if same port)"""
+        global _shared_clients, _shared_client_refs
+
+        if self.client is not None:
+            # Already have a client (shared)
+            logger.info(f"Motor driver using shared connection (slave_id={self.slave_id})")
+            return
+
+        # Check if we already have a connection for this port
+        if self.port in _shared_clients:
+            # Reuse existing connection
+            self.client = _shared_clients[self.port]
+            _shared_client_refs[self.port] += 1
+            self._owns_client = False
+            logger.info(f"Motor driver connected (slave_id={self.slave_id}) - sharing connection")
+        else:
+            # Create new connection
+            self.client = OrientalCvdMotor(port=self.port)
+            self.client.connect()
+            _shared_clients[self.port] = self.client
+            _shared_client_refs[self.port] = 1
+            self._owns_client = True
+            logger.info(f"Motor driver connected (slave_id={self.slave_id}) - new connection")
 
     def close(self):
-        """Close Modbus connection"""
-        self.client.close()
-        logger.info("Motor driver disconnected")
+        """Close Modbus connection (only if this is the last user of shared connection)"""
+        global _shared_clients, _shared_client_refs
+
+        if self.client is None:
+            return
+
+        if self.port in _shared_client_refs:
+            _shared_client_refs[self.port] -= 1
+
+            if _shared_client_refs[self.port] <= 0:
+                # Last user, actually close the connection
+                self.client.close()
+                del _shared_clients[self.port]
+                del _shared_client_refs[self.port]
+                logger.info(f"Motor driver disconnected (slave_id={self.slave_id}) - connection closed")
+            else:
+                logger.info(f"Motor driver disconnected (slave_id={self.slave_id}) - connection still shared")
+        else:
+            # Not in shared pool, just close
+            self.client.close()
+            logger.info(f"Motor driver disconnected (slave_id={self.slave_id})")
 
     # ========================================================================
     # Homing Commands
