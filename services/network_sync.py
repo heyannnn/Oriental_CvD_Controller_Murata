@@ -41,6 +41,9 @@ class NetworkSync:
 
         net_config = config.get('network', {})
 
+        # Store station config for video behavior
+        self.homing_required = config.get('homing_required', True)
+
         self.listen_port = net_config.get('listen_port', 10000)
         self.send_port = net_config.get('send_port', 10001)
         self.is_sender = net_config.get('is_sender', False)
@@ -219,8 +222,23 @@ class NetworkSync:
         Send command to external video player program.
 
         Args:
-            command: Command string (ready, standby, start, stop, finished, error)
+            command: Command string (ready, start, standby, stop, finished, error)
             params: Optional dict of parameters
+
+        Video Behavior:
+          Stations WITH homing (5,6,7,8,9):
+            - "ready" → NormalOperation.csv (idle/ready state after homing)
+            - "start" → NormalOperation.csv (first cycle when V key pressed)
+            - "standby" → Sync.csv (auto-loop cycles after first)
+            - "finished" → (no action - keeps playing current video)
+            - "stop" → Waiting.csv (stopped/waiting state)
+
+          Stations WITHOUT homing (2,3,4,10,11):
+            - "ready" → (no action)
+            - "start" → NormalOperation.csv (first cycle when V key pressed)
+            - "standby" → NormalOperation.csv (auto-loop cycles)
+            - "finished" → (no action)
+            - "stop" → Waiting.csv (stopped state)
         """
         if not OSC_AVAILABLE:
             return
@@ -228,14 +246,45 @@ class NetworkSync:
         try:
             client = udp_client.SimpleUDPClient(self.video_player_ip, self.video_player_port)
 
-            if command in ("start", "standby"):
-                # Send as /video/<command> with parameters
-                client.send_message("/playlist/load", ["./NormalOperation.csv"])
-            elif command == "stop":
-                # Send as /video/<command>
-                client.send_message("/playlist/load", ["./Waiting.csv"])
-
-            logger.info(f"Sent video command: /video/{command}")
+            if self.homing_required:
+                # Stations 5,6,7,8,9 - have homing, use 3 different videos
+                if command == "ready":
+                    # After homing complete → show ready/idle state
+                    client.send_message("/playlist/load", ["./NormalOperation.csv"])
+                    logger.info(f"Sent video command: /playlist/load [NormalOperation.csv] (ready state)")
+                elif command == "start":
+                    # First start (V key pressed) → show initial operation
+                    client.send_message("/playlist/load", ["./NormalOperation.csv"])
+                    logger.info(f"Sent video command: /playlist/load [NormalOperation.csv] (first cycle)")
+                elif command == "standby":
+                    # Auto-loop restart → show synchronized running state
+                    client.send_message("/playlist/load", ["./Sync.csv"])
+                    logger.info(f"Sent video command: /playlist/load [Sync.csv] (loop cycle)")
+                elif command == "stop":
+                    # Stopped → show waiting state
+                    client.send_message("/playlist/load", ["./Waiting.csv"])
+                    logger.info(f"Sent video command: /playlist/load [Waiting.csv] (stopped state)")
+                else:
+                    logger.info(f"Video command '{command}' - no action defined")
+            else:
+                # Stations 2,3,4,10,11 - no homing, use 2 videos only
+                if command == "start":
+                    # First start (V key pressed) → show running state
+                    client.send_message("/playlist/load", ["./NormalOperation.csv"])
+                    logger.info(f"Sent video command: /playlist/load [NormalOperation.csv] (first cycle)")
+                elif command == "standby":
+                    # Auto-loop restart → show running state (same as start for non-homing stations)
+                    client.send_message("/playlist/load", ["./NormalOperation.csv"])
+                    logger.info(f"Sent video command: /playlist/load [NormalOperation.csv] (loop cycle)")
+                elif command == "stop":
+                    # Stopped → show waiting state
+                    client.send_message("/playlist/load", ["./Waiting.csv"])
+                    logger.info(f"Sent video command: /playlist/load [Waiting.csv] (stopped state)")
+                elif command == "ready":
+                    # No homing, so no special ready state video
+                    logger.info(f"Video command 'ready' - no action for non-homing station")
+                else:
+                    logger.info(f"Video command '{command}' - no action defined")
 
         except Exception as e:
             logger.error(f"Failed to send video command {command}: {e}")

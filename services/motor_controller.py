@@ -196,7 +196,8 @@ class MotorController:
     async def _monitor_operation(self):
         """
         Monitor operation until ALL motors complete.
-        Detects completion when MOVE flag goes False on all motors.
+        Detects completion when READY flag turns True (driver ready for next command).
+        This allows fast looping by queuing next operation before motor physically stops.
         """
         logger.info(f"Monitoring operation {self.current_operation} on {len(self.drivers)} motor(s)...")
         logger.info(f"Callback set: {self._on_finished is not None}")
@@ -209,7 +210,7 @@ class MotorController:
         for i in range(len(self.drivers)):
             motor_states.append({
                 'operation_started': False,
-                'was_moving': False,
+                'ready_went_low': False,  # Track that READY went False (operation accepted)
                 'finished': False
             })
 
@@ -226,23 +227,25 @@ class MotorController:
                 if motor_states[i]['finished']:
                     continue  # Already finished, skip
 
+                ready = driver.is_ready()
                 moving = driver.is_moving()
                 position = driver.read_position()
 
-                # Check if operation started (motor started moving)
-                if not motor_states[i]['operation_started'] and moving:
+                # Check if operation started (READY went False after START command)
+                if not motor_states[i]['operation_started'] and not ready:
                     motor_states[i]['operation_started'] = True
-                    motor_states[i]['was_moving'] = True
-                    logger.info(f"✓ {self.motor_names[i]} STARTED - Motor is moving")
+                    motor_states[i]['ready_went_low'] = True
+                    logger.info(f"✓ {self.motor_names[i]} STARTED - Operation accepted by driver")
 
-                # Track if motor was moving
-                if moving:
-                    motor_states[i]['was_moving'] = True
+                # Track that READY was low at some point
+                if not ready:
+                    motor_states[i]['ready_went_low'] = True
 
-                # Detect completion: MOVE flag goes False after motor was moving
-                if motor_states[i]['operation_started'] and motor_states[i]['was_moving'] and not moving:
+                # Detect completion: READY flag goes True after it was False
+                # This means driver is ready to accept next command (fast looping)
+                if motor_states[i]['operation_started'] and motor_states[i]['ready_went_low'] and ready:
                     motor_states[i]['finished'] = True
-                    logger.info(f"✓ {self.motor_names[i]} FINISHED - position: {position}")
+                    logger.info(f"✓ {self.motor_names[i]} READY - Driver ready for next operation (position: {position})")
 
                 # Check if this motor is still running
                 if not motor_states[i]['finished']:
@@ -253,8 +256,9 @@ class MotorController:
                 status_parts = []
                 for i, driver in enumerate(self.drivers):
                     pos = driver.read_position()
+                    ready = driver.is_ready()
                     moving = driver.is_moving()
-                    status = "DONE" if motor_states[i]['finished'] else ("MOVE" if moving else "WAIT")
+                    status = "DONE" if motor_states[i]['finished'] else ("BUSY" if not ready else ("MOVE" if moving else "WAIT"))
                     status_parts.append(f"{self.motor_names[i]}:{pos}({status})")
                 logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | {' | '.join(status_parts)}")
                 last_log_time = elapsed
@@ -263,6 +267,7 @@ class MotorController:
             if all_finished:
                 logger.info(f"✓ Operation {self.current_operation} FINISHED on all {len(self.drivers)} motor(s)")
                 logger.info(f"  Total duration: {elapsed:.1f}s")
+                logger.info(f"  All drivers READY for next operation")
                 self.state = MotorState.FINISHED
 
                 if self._on_finished:

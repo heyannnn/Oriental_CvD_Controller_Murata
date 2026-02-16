@@ -149,10 +149,10 @@ class SequenceManager:
 
         # Move to standby
         self.state = SystemState.STANDBY
-        logger.info("Sending STANDBY signal...")
+        logger.info("Sending START signal...")
 
-        # Send standby to video player
-        self.network_sync.send_video_command("standby")
+        # Send start to video player (first cycle uses NormalOperation.csv)
+        self.network_sync.send_video_command("start")
 
         # Broadcast start to all stations (if this is master)
         self.network_sync.broadcast_start()
@@ -212,6 +212,9 @@ class SequenceManager:
         self.cycle_count += 1
         logger.info(f"=== Starting cycle {self.cycle_count} ===")
         self.state = SystemState.RUNNING
+
+        # Send standby signal to reload Sync.csv for this cycle
+        self.network_sync.send_video_command("standby")
 
         # Start operation 0 again
         self.motor_controller.start_operation(op_no=0)
