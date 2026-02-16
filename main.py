@@ -259,9 +259,16 @@ async def main():
         motor_controller._on_return_to_zero_complete = sequence_manager.on_return_to_zero_complete
 
     # Wire network callbacks to sequence manager
-    network_sync.set_on_start(sequence_manager.on_network_start)
+    # Note: OSC callbacks run in separate thread, need to schedule in main loop
+    def on_network_start_wrapper():
+        asyncio.run_coroutine_threadsafe(sequence_manager.on_network_start(), loop)
+
+    def on_network_reset_wrapper():
+        asyncio.run_coroutine_threadsafe(sequence_manager.on_network_reset(), loop)
+
+    network_sync.set_on_start(on_network_start_wrapper)
     network_sync.set_on_stop(sequence_manager.on_network_stop)
-    network_sync.set_on_reset(lambda: asyncio.create_task(sequence_manager.on_network_reset()))
+    network_sync.set_on_reset(on_network_reset_wrapper)
     network_sync.set_on_clear_alarm(sequence_manager.on_clear_alarm_pressed)
 
     # ========================================================================
@@ -276,7 +283,12 @@ async def main():
 
             # Wire keyboard to sequence manager
             # Note: Keyboard callbacks run in separate thread, need to schedule in main loop
-            keyboard_handler.set_on_start(sequence_manager.on_start_pressed)
+
+            # Start is async, so schedule it in the main event loop
+            def on_start_wrapper():
+                asyncio.run_coroutine_threadsafe(sequence_manager.on_start_pressed(), loop)
+
+            keyboard_handler.set_on_start(on_start_wrapper)
             keyboard_handler.set_on_stop(sequence_manager.on_stop_pressed)
             keyboard_handler.set_on_clear_alarm(sequence_manager.on_clear_alarm_pressed)
 

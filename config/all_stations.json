@@ -4,7 +4,7 @@
   "default": {
     "_comment": "Default settings inherited by all stations",
     "serial": {
-      "port": "/dev/tty.usbserial-FT78LMAE",
+      "port": "/dev/ttyAMA0",
       "baudrate": 230400,
       "parity": "N",
       "stopbits": 1
@@ -61,7 +61,8 @@
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
     ],
     "homing_required": true,
-    "return_to_zero_on_stop": true
+    "return_to_zero_on_stop": true,
+    "video_sync_delay_sec": 11.0
   },
 
   "06": {
@@ -70,7 +71,8 @@
       {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
     ],
     "homing_required": true,
-    "return_to_zero_on_stop": true
+    "return_to_zero_on_stop": true,
+    "video_sync_delay_sec": 2.0
   },
 
   "07": {
@@ -80,6 +82,7 @@
     ],
     "homing_required": true,
     "return_to_zero_on_stop": true,
+    "video_sync_delay_sec": 2.0,
     "led": {
       "enabled": true,
       "gpio_pin": 18,
@@ -95,7 +98,8 @@
       {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
     ],
     "homing_required": true,
-    "return_to_zero_on_stop": true
+    "return_to_zero_on_stop": true,
+    "video_sync_delay_sec": 2.0
   },
 
   "09": {
@@ -105,7 +109,8 @@
       {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
     ],
     "homing_required": true,
-    "return_to_zero_on_stop": true
+    "return_to_zero_on_stop": true,
+    "video_sync_delay_sec": 2.0
   },
 
   "10": {

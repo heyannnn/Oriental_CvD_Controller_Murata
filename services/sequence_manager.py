@@ -50,7 +50,11 @@ class SequenceManager:
         self.cycle_count = 0
         self.loop_delay_sec = config.get('loop_delay_sec', 3.0) if config else 3.0
 
+        # Video synchronization (delay for first start only)
+        self.video_sync_delay_sec = config.get('video_sync_delay_sec', 1.0) if config else 1.0
+
         logger.info("Sequence manager initialized")
+        logger.info(f"Video sync delay: {self.video_sync_delay_sec}s (first cycle only)")
 
     async def initialize(self):
         """
@@ -132,10 +136,11 @@ class SequenceManager:
     # Keyboard Commands (from KeyboardHandler)
     # ========================================================================
 
-    def on_start_pressed(self):
+    async def on_start_pressed(self):
         """
         START button pressed (V key when not running).
         Flow: READY → STANDBY → RUNNING (looping handled by video completion)
+        Waits video_sync_delay_sec before starting motor to sync with video intro.
         """
         if self.state != SystemState.READY and self.state != SystemState.STANDBY and self.state != SystemState.STOPPED:
             logger.warning(f"Cannot start - system not ready (state={self.state.value})")
@@ -156,6 +161,11 @@ class SequenceManager:
 
         # Broadcast start to all stations (if this is master)
         self.network_sync.broadcast_start()
+
+        # Wait for video intro to play before starting motor
+        import asyncio
+        logger.info(f"Waiting {self.video_sync_delay_sec}s for video intro to play...")
+        await asyncio.sleep(self.video_sync_delay_sec)
 
         # Start motor operation
         logger.info(f"=== Starting cycle {self.cycle_count} ===")
@@ -262,13 +272,13 @@ class SequenceManager:
     # OSC Network Commands (received from station 2)
     # ========================================================================
 
-    def on_network_start(self):
+    async def on_network_start(self):
         """
         START command received via OSC (for non-keyboard stations).
         Same as on_start_pressed but without keyboard.
         """
         logger.info("START command received via network")
-        self.on_start_pressed()
+        await self.on_start_pressed()
 
     def on_network_stop(self):
         """STOP command received via OSC"""

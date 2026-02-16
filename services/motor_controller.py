@@ -131,11 +131,10 @@ class MotorController:
                         else:
                             logger.info(f"  {self.motor_names[i]} already homed - skipping")
 
-                    # Log final positions
+                    # Log final status
                     logger.info("=" * 70)
                     for i, driver in enumerate(self.drivers):
-                        final_pos = driver.read_position()
-                        logger.info(f"✓ {self.motor_names[i]} homed - position: {final_pos}")
+                        logger.info(f"✓ {self.motor_names[i]} homed successfully")
                     logger.info("=" * 70)
 
                     self.state = MotorState.READY
@@ -169,21 +168,17 @@ class MotorController:
             logger.warning(f"⚠ Cannot start operation - motors not ready (state={self.state.value})")
             return
 
-        # Read current positions before starting
         logger.info("=" * 70)
         logger.info(f"Starting MEXE operation {op_no} on {len(self.drivers)} motor(s)")
-        for i, driver in enumerate(self.drivers):
-            current_pos = driver.read_position()
-            logger.info(f"  {self.motor_names[i]}: starting from position {current_pos}")
         logger.info("=" * 70)
 
         self.state = MotorState.RUNNING
         self.current_operation = op_no
 
-        # Start operation on all motors
+        # Start operation on all motors simultaneously
         for i, driver in enumerate(self.drivers):
             driver.start_operation(op_no=op_no)
-            logger.info(f"  {self.motor_names[i]}: operation started")
+            logger.info(f"  ✓ {self.motor_names[i]}: START command sent")
 
         # Start monitoring task (handle both sync and async contexts)
         if self._event_loop is not None:
@@ -197,87 +192,54 @@ class MotorController:
         """
         Monitor operation until ALL motors complete.
         Detects completion when READY flag turns True (driver ready for next command).
-        This allows fast looping by queuing next operation before motor physically stops.
+        Simple approach: Just check READY flags, no position reading during operation.
         """
-        logger.info(f"Monitoring operation {self.current_operation} on {len(self.drivers)} motor(s)...")
-        logger.info(f"Callback set: {self._on_finished is not None}")
+        logger.info(f"Monitoring operation {self.current_operation} - waiting for all READY flags...")
 
-        # Wait a moment for operation to start
-        await asyncio.sleep(0.5)
+        # Wait a moment for operation to start (READY goes False)
+        await asyncio.sleep(0.3)
 
-        # Track state for each motor
-        motor_states = []
-        for i in range(len(self.drivers)):
-            motor_states.append({
-                'operation_started': False,
-                'ready_went_low': False,  # Track that READY went False (operation accepted)
-                'finished': False
-            })
+        # Track state for each motor - simple boolean flags
+        ready_went_low = [False] * len(self.drivers)
 
-        # Monitor until all operations complete
         start_time = time.time()
         last_log_time = 0
 
         while True:
             elapsed = time.time() - start_time
-            all_finished = True
 
-            # Check each motor
+            # Check READY flag for all motors
+            all_ready = True
             for i, driver in enumerate(self.drivers):
-                if motor_states[i]['finished']:
-                    continue  # Already finished, skip
-
                 ready = driver.is_ready()
-                moving = driver.is_moving()
-                position = driver.read_position()
 
-                # Check if operation started (READY went False after START command)
-                if not motor_states[i]['operation_started'] and not ready:
-                    motor_states[i]['operation_started'] = True
-                    motor_states[i]['ready_went_low'] = True
-                    logger.info(f"✓ {self.motor_names[i]} STARTED - Operation accepted by driver")
-
-                # Track that READY was low at some point
+                # Track that READY went low (operation accepted)
                 if not ready:
-                    motor_states[i]['ready_went_low'] = True
+                    ready_went_low[i] = True
 
-                # Detect completion: READY flag goes True after it was False
-                # This means driver is ready to accept next command (fast looping)
-                if motor_states[i]['operation_started'] and motor_states[i]['ready_went_low'] and ready:
-                    motor_states[i]['finished'] = True
-                    logger.info(f"✓ {self.motor_names[i]} READY - Driver ready for next operation (position: {position})")
+                # Motor is done when READY=True AND it was False before
+                motor_done = ready and ready_went_low[i]
 
-                # Check if this motor is still running
-                if not motor_states[i]['finished']:
-                    all_finished = False
+                if not motor_done:
+                    all_ready = False
 
-            # Log status every 0.5 seconds
-            if elapsed - last_log_time >= 0.5:
-                status_parts = []
-                for i, driver in enumerate(self.drivers):
-                    pos = driver.read_position()
-                    ready = driver.is_ready()
-                    moving = driver.is_moving()
-                    status = "DONE" if motor_states[i]['finished'] else ("BUSY" if not ready else ("MOVE" if moving else "WAIT"))
-                    status_parts.append(f"{self.motor_names[i]}:{pos}({status})")
-                logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | {' | '.join(status_parts)}")
+            # Log status every 1 second (reduced logging)
+            if elapsed - last_log_time >= 1.0:
+                ready_count = sum(1 for i in range(len(self.drivers)) if self.drivers[i].is_ready() and ready_went_low[i])
+                logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | READY: {ready_count}/{len(self.drivers)} motors")
                 last_log_time = elapsed
 
-            # All motors finished
-            if all_finished:
-                logger.info(f"✓ Operation {self.current_operation} FINISHED on all {len(self.drivers)} motor(s)")
-                logger.info(f"  Total duration: {elapsed:.1f}s")
-                logger.info(f"  All drivers READY for next operation")
+            # All motors ready
+            if all_ready:
+                logger.info(f"✓ Operation {self.current_operation} FINISHED - All {len(self.drivers)} motor(s) READY")
+                logger.info(f"  Duration: {elapsed:.1f}s")
                 self.state = MotorState.FINISHED
 
                 if self._on_finished:
-                    logger.info("Calling on_finished callback")
                     try:
                         self._on_finished()
                     except Exception as e:
                         logger.error(f"Error in on_finished callback: {e}", exc_info=True)
-                else:
-                    logger.warning("No on_finished callback set!")
 
                 # Return to ready state
                 self.state = MotorState.READY
@@ -289,76 +251,55 @@ class MotorController:
                 self.state = MotorState.ERROR
                 break
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)  # Check every 200ms
 
     async def _monitor_return_to_zero(self):
         """
         Monitor return-to-zero operation until ALL motors complete.
-        Detects completion when MOVE flag goes False on all motors.
+        Uses READY flag detection (same as operation monitoring).
+        Simple and handles motors already at position 0.
         """
-        logger.info(f"Monitoring return to zero on {len(self.drivers)} motor(s)...")
+        logger.info(f"Monitoring return to zero - waiting for all READY flags...")
 
-        # Wait a moment for motion to start
+        # Wait a moment for command to be accepted
         await asyncio.sleep(0.3)
 
-        # Track state for each motor
-        motor_states = []
-        for i in range(len(self.drivers)):
-            motor_states.append({
-                'motion_started': False,
-                'was_moving': False,
-                'finished': False
-            })
+        # Track state for each motor - simple boolean flags
+        ready_went_low = [False] * len(self.drivers)
 
         start_time = time.time()
         last_log_time = 0
 
         while True:
             elapsed = time.time() - start_time
-            all_finished = True
 
-            # Check each motor
+            # Check READY flag for all motors
+            all_ready = True
             for i, driver in enumerate(self.drivers):
-                if motor_states[i]['finished']:
-                    continue
+                ready = driver.is_ready()
 
-                moving = driver.is_moving()
-                position = driver.read_position()
+                # Track that READY went low (command accepted)
+                if not ready:
+                    ready_went_low[i] = True
 
-                # Check if motion started
-                if not motor_states[i]['motion_started'] and moving:
-                    motor_states[i]['motion_started'] = True
-                    motor_states[i]['was_moving'] = True
-                    logger.info(f"  {self.motor_names[i]} returning to zero...")
+                # Motor is done when READY=True AND it was False before
+                motor_done = ready and ready_went_low[i]
 
-                if moving:
-                    motor_states[i]['was_moving'] = True
+                if not motor_done:
+                    all_ready = False
 
-                # Detect completion
-                if motor_states[i]['motion_started'] and motor_states[i]['was_moving'] and not moving:
-                    motor_states[i]['finished'] = True
-                    logger.info(f"✓ {self.motor_names[i]} at zero - position: {position}")
-
-                if not motor_states[i]['finished']:
-                    all_finished = False
-
-            # Log status every 0.5 seconds
-            if elapsed - last_log_time >= 0.5:
-                status_parts = []
-                for i, driver in enumerate(self.drivers):
-                    pos = driver.read_position()
-                    moving = driver.is_moving()
-                    status = "DONE" if motor_states[i]['finished'] else ("MOVE" if moving else "WAIT")
-                    status_parts.append(f"{self.motor_names[i]}:{pos}({status})")
-                logger.info(f"Return to zero: {elapsed:.1f}s | {' | '.join(status_parts)}")
+            # Log status every 1 second (reduced logging)
+            if elapsed - last_log_time >= 1.0:
+                ready_count = sum(1 for i in range(len(self.drivers)) if self.drivers[i].is_ready() and ready_went_low[i])
+                logger.info(f"Return to zero: {elapsed:.1f}s | READY: {ready_count}/{len(self.drivers)} motors")
                 last_log_time = elapsed
 
-            # All motors finished
-            if all_finished:
-                logger.info(f"✓ Return to zero COMPLETE on all {len(self.drivers)} motor(s)")
+            # All motors ready
+            if all_ready:
+                logger.info(f"✓ Return to zero COMPLETE - All {len(self.drivers)} motor(s) READY")
+                logger.info(f"  Duration: {elapsed:.1f}s")
 
                 if self._on_return_to_zero_complete:
-                    logger.info("Calling on_return_to_zero_complete callback")
                     try:
                         self._on_return_to_zero_complete()
                     except Exception as e:
@@ -373,7 +314,7 @@ class MotorController:
                 self.state = MotorState.ERROR
                 break
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)  # Check every 200ms
 
     def stop(self):
         """
@@ -398,10 +339,11 @@ class MotorController:
         # Check if we should return to zero after stopping
         if self.return_to_zero_on_stop:
             time.sleep(0.3)  # Brief pause to ensure motors are stopped
+
             logger.info("Returning all motors to position 0...")
             for i, driver in enumerate(self.drivers):
                 driver.return_to_zero(velocity=5000)
-                logger.info(f"  {self.motor_names[i]}: returning to zero")
+                logger.info(f"  {self.motor_names[i]}: return to zero command sent")
 
             # Start monitoring task to detect when return-to-zero completes
             if self._event_loop is not None:
@@ -440,8 +382,7 @@ class MotorController:
 
             logger.info("Reset complete - all motors READY")
             for i, driver in enumerate(self.drivers):
-                pos = driver.read_position()
-                logger.info(f"  {self.motor_names[i]}: position {pos}")
+                logger.info(f"  {self.motor_names[i]}: reset complete")
 
             self.state = MotorState.READY
 
