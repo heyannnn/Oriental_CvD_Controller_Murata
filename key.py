@@ -199,7 +199,8 @@ def send_clear_alarm_command():
 
 class KeyboardController:
     def __init__(self):
-        self.is_running = False
+        # Start as True because stations auto-start after boot/homing
+        self.is_running = True
         self._active = True
 
     async def handle_keyboard(self):

@@ -40,9 +40,7 @@ class KeyboardHandler:
         self._on_stop = None
         self._on_reset = None
         self._on_clear_alarm = None
-
-        # State tracking for V key toggle
-        self.is_running = False
+        self._get_is_running = None  # Callback to check actual system state
 
         # Thread control
         self._running = True
@@ -67,6 +65,10 @@ class KeyboardHandler:
         """Set callback for CLEAR ALARM (Ctrl key)"""
         self._on_clear_alarm = callback
 
+    def set_get_is_running(self, callback):
+        """Set callback to check if system is currently running"""
+        self._get_is_running = callback
+
     def _keyboard_loop(self):
         """Background thread that reads keyboard input"""
         logger.info("Keyboard listener thread started")
@@ -81,23 +83,23 @@ class KeyboardHandler:
 
                 # V key - Start/Stop toggle
                 if key.lower() == 'v':
-                    if self.is_running:
+                    # Check actual system state
+                    is_running = self._get_is_running() if self._get_is_running else False
+
+                    if is_running:
                         logger.info("V key pressed: STOP")
                         if self._on_stop:
                             self._on_stop()
-                        self.is_running = False
                     else:
                         logger.info("V key pressed: START")
                         if self._on_start:
                             self._on_start()
-                        self.is_running = True
 
                 # C key - Standby/Reset
                 elif key.lower() == 'c':
                     logger.info("C key pressed: STANDBY/RESET")
                     if self._on_reset:
                         self._on_reset()
-                    self.is_running = False
 
                 # Ctrl+C is handled by Python's signal handler
                 # Ctrl key alone (ASCII 0x11 for Ctrl+Q, etc.)

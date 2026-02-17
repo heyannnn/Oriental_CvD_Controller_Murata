@@ -124,7 +124,6 @@ motor_controller = None
 sequence_manager = None
 network_sync = None
 keyboard_handler = None
-video_player_process = None
 
 # ============================================================================
 # Signal Handlers
@@ -144,9 +143,6 @@ def shutdown(signum, frame):
     if keyboard_handler:
         keyboard_handler.close()
 
-    if video_player_process:
-        video_player_process.terminate()
-        logger.info("Video player stopped")
 
     logger.info("Shutdown complete")
     sys.exit(0)
@@ -201,21 +197,6 @@ async def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    # ========================================================================
-    # Start Video Player
-    # ========================================================================
-    logger.info("\n[0/4] Starting video player...")
-    import subprocess
-
-    video_player_process = subprocess.Popen(
-        ["python3", "osc_mpv_playlist.py", "--media-dir", "/home/user/osc-mp4-player/"],
-        cwd="/home/user/osc-mp4-player/",
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-
-    await asyncio.sleep(2)
-    logger.info("✓ Video player started")
 
     # ========================================================================
     # Initialize Network Sync
@@ -298,6 +279,9 @@ async def main():
 
             keyboard_handler.set_on_reset(on_reset_wrapper)
 
+            # Wire state check so V key knows if system is running
+            keyboard_handler.set_get_is_running(sequence_manager.is_running)
+
             logger.info("✓ USB keyboard handler initialized")
 
         except Exception as e:
@@ -318,8 +302,11 @@ async def main():
         await sequence_manager.initialize()
     else:
         logger.info("\n" + "=" * 70)
-        logger.info("SYSTEM READY (No motors to initialize)")
+        logger.info("SYSTEM BOOT (No motors) - Auto starting video")
         logger.info("=" * 70)
+
+        # For video-only stations, auto-start video playback
+        await sequence_manager.initialize_video_only()
 
     # ========================================================================
     # Main Loop

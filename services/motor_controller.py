@@ -117,19 +117,12 @@ class MotorController:
                 if self._on_ready:
                     self._on_ready()
             else:
-                # Home motors that need homing
-                logger.info("HOME_END=False on some motors - Starting homing...")
+                # Home all motors in parallel
+                logger.info("HOME_END=False on some motors - Starting parallel homing...")
                 self.state = MotorState.HOMING
 
                 try:
-                    # Home motors one by one to avoid coroutine issues
-                    for i, driver in enumerate(self.drivers):
-                        if not driver.is_home_complete():
-                            logger.info(f"  Starting homing for {self.motor_names[i]}...")
-                            await driver.start_homing(timeout=100)
-                            logger.info(f"  ✓ {self.motor_names[i]} homing complete")
-                        else:
-                            logger.info(f"  {self.motor_names[i]} already homed - skipping")
+                    await self._parallel_homing(timeout=100)
 
                     # Log final status
                     logger.info("=" * 70)
@@ -156,6 +149,74 @@ class MotorController:
 
             if self._on_ready:
                 self._on_ready()
+
+    async def _parallel_homing(self, timeout=100):
+        """
+        Home all motors in parallel.
+        Sends HOME command to all motors simultaneously, then waits for all HOME_END flags.
+        """
+        # Track which motors need homing
+        needs_homing = []
+        for i, driver in enumerate(self.drivers):
+            if not driver.is_home_complete():
+                needs_homing.append(i)
+                logger.info(f"  {self.motor_names[i]}: needs homing")
+            else:
+                logger.info(f"  {self.motor_names[i]}: already homed - skipping")
+
+        if not needs_homing:
+            logger.info("All motors already homed")
+            return
+
+        # Send HOME command to all motors that need it (simultaneously)
+        logger.info(f"Sending HOME command to {len(needs_homing)} motor(s)...")
+        for i in needs_homing:
+            self.drivers[i].send_home_command()
+            logger.info(f"  {self.motor_names[i]}: HOME command sent")
+
+        # Wait for all motors to complete homing
+        start_time = time.time()
+        last_log_time = 0
+
+        while True:
+            elapsed = time.time() - start_time
+
+            # Check HOME_END flag for all motors that needed homing
+            all_homed = True
+            homed_count = 0
+            for i in needs_homing:
+                if self.drivers[i].is_home_complete():
+                    homed_count += 1
+                else:
+                    all_homed = False
+
+            # Log status every 1 second
+            if elapsed - last_log_time >= 1.0:
+                # Read positions for status display
+                positions = []
+                for i in needs_homing:
+                    pos = self.drivers[i].read_position()
+                    positions.append(f"{self.motor_names[i]}:{pos}")
+                pos_str = ", ".join(positions)
+                logger.info(f"Homing: {elapsed:.1f}s | HOME_END: {homed_count}/{len(needs_homing)} | Pos: [{pos_str}]")
+                last_log_time = elapsed
+
+            # All motors homed
+            if all_homed:
+                logger.info(f"✓ All {len(needs_homing)} motor(s) homing complete in {elapsed:.1f}s")
+                # Clear HOME command
+                for i in needs_homing:
+                    self.drivers[i].clear_home_command()
+                return
+
+            # Timeout
+            if elapsed > timeout:
+                # Clear HOME command before raising error
+                for i in needs_homing:
+                    self.drivers[i].clear_home_command()
+                raise Exception(f"Homing timeout after {elapsed:.1f}s")
+
+            await asyncio.sleep(0.2)
 
     def start_operation(self, op_no=0):
         """
@@ -256,16 +317,39 @@ class MotorController:
     async def _monitor_return_to_zero(self):
         """
         Monitor return-to-zero operation until ALL motors complete.
-        Uses READY flag detection (same as operation monitoring).
-        Simple and handles motors already at position 0.
+        Uses READY flag detection, but checks if already at position 0 first.
         """
         logger.info(f"Monitoring return to zero - waiting for all READY flags...")
 
         # Wait a moment for command to be accepted
         await asyncio.sleep(0.3)
 
-        # Track state for each motor - simple boolean flags
-        ready_went_low = [False] * len(self.drivers)
+        # Check if motors are already at position 0 with READY flag
+        # This handles the case where motor is already at target - READY never goes low
+        already_at_zero = []
+        for i, driver in enumerate(self.drivers):
+            pos = driver.read_position()
+            ready = driver.is_ready()
+            at_zero = (abs(pos) < 10) and ready  # Within 10 pulses of zero and ready
+            already_at_zero.append(at_zero)
+            if at_zero:
+                logger.info(f"  {self.motor_names[i]}: Already at position 0 (pos={pos}), skipping wait")
+
+        # If all motors already at zero, we're done
+        if all(already_at_zero):
+            logger.info(f"✓ Return to zero COMPLETE - All {len(self.drivers)} motor(s) already at position 0")
+
+            if self._on_return_to_zero_complete:
+                try:
+                    self._on_return_to_zero_complete()
+                except Exception as e:
+                    logger.error(f"Error in on_return_to_zero_complete callback: {e}", exc_info=True)
+
+            self.state = MotorState.READY
+            return
+
+        # Track state for each motor - mark already-at-zero motors as done
+        ready_went_low = already_at_zero.copy()  # Pre-mark motors already at zero
 
         start_time = time.time()
         last_log_time = 0
@@ -282,7 +366,7 @@ class MotorController:
                 if not ready:
                     ready_went_low[i] = True
 
-                # Motor is done when READY=True AND it was False before
+                # Motor is done when READY=True AND it was False before (or was already at zero)
                 motor_done = ready and ready_went_low[i]
 
                 if not motor_done:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Oriental Motor Controller Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Oriental_CvD_Controller_Murata
+ExecStart=/home/pi/Oriental_CvD_Controller_Murata/venv/bin/python /home/pi/Oriental_CvD_Controller_Murata/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

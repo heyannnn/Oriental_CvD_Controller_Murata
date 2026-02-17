@@ -71,17 +71,80 @@ class SequenceManager:
         # MotorController will callback when ready
         await self.motor_controller.initialize()
 
+    async def initialize_video_only(self):
+        """
+        System initialization for video-only stations (no motors).
+        Auto-starts video playback.
+        """
+        import asyncio
+
+        logger.info("=== SYSTEM BOOT (VIDEO ONLY) ===")
+        self.state = SystemState.BOOT
+
+        # Enable looping mode
+        self.is_looping = True
+        self.cycle_count = 1
+
+        # Send start to video player (NormalOperation.csv)
+        logger.info("Sending START signal to video player...")
+        self.network_sync.send_video_command("start")
+
+        # Wait for video sync delay
+        logger.info(f"Waiting {self.video_sync_delay_sec}s for video intro...")
+        await asyncio.sleep(self.video_sync_delay_sec)
+
+        self.state = SystemState.RUNNING
+        logger.info("=== VIDEO ONLY STATION RUNNING ===")
+
     def on_motor_ready(self):
         """
-        Callback from MotorController when homing complete.
+        Callback from MotorController when homing complete (or no homing needed).
+        Auto-starts operation: send video command, wait delay, start motors.
         """
-        logger.info("=== MOTOR READY ===")
-        self.state = SystemState.READY
+        logger.info("=== MOTOR READY - AUTO STARTING ===")
 
-        # Send ready signal to video player (OSC)
-        self.network_sync.send_video_command("ready")
+        # Auto-start operation after homing
+        import asyncio
+        if self.motor_controller and self.motor_controller._event_loop:
+            asyncio.run_coroutine_threadsafe(
+                self._auto_start_operation(),
+                self.motor_controller._event_loop
+            )
+        else:
+            # Fallback if no event loop (shouldn't happen)
+            logger.warning("No event loop available for auto-start")
+            self.state = SystemState.READY
 
-        logger.info("System ready - waiting for START command")
+    async def _auto_start_operation(self):
+        """
+        Auto-start operation after homing completes.
+        Sends video command, waits for sync delay, then starts motors.
+        """
+        import asyncio
+
+        # Enable looping mode
+        self.is_looping = True
+        self.cycle_count = 1
+
+        # Send start to video player (NormalOperation.csv)
+        logger.info("Sending START signal to video player...")
+        self.network_sync.send_video_command("start")
+
+        # Broadcast start to all stations (if this is master)
+        self.network_sync.broadcast_start()
+
+        # Wait for video sync delay
+        logger.info(f"Waiting {self.video_sync_delay_sec}s for video intro...")
+        await asyncio.sleep(self.video_sync_delay_sec)
+
+        # Start motor operation
+        logger.info(f"=== Starting cycle {self.cycle_count} ===")
+        self.state = SystemState.RUNNING
+
+        if self.motor_controller:
+            self.motor_controller.start_operation(op_no=0)
+
+        logger.info("=== SYSTEM RUNNING ===")
 
     def on_motor_finished(self):
         """
@@ -301,3 +364,7 @@ class SequenceManager:
     def is_ready(self) -> bool:
         """Check if system is ready"""
         return self.state == SystemState.READY
+
+    def is_running(self) -> bool:
+        """Check if system is currently running (for V key toggle)"""
+        return self.state == SystemState.RUNNING

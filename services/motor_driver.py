@@ -105,6 +105,20 @@ class MotorDriver:
         logger.info(f"Starting homing (slave_id={self.slave_id})")
         await self.client.start_homing_async(timeout=timeout, slave_id=self.slave_id)
 
+    def send_home_command(self):
+        """
+        Send HOME command without waiting for completion.
+        Use is_home_complete() to check if homing is done.
+        """
+        from drivers.cvd_define import InputSignal
+        logger.info(f"Sending HOME command (slave_id={self.slave_id})")
+        self.client.send_input_signal(signal=InputSignal.HOME, slave_id=self.slave_id)
+
+    def clear_home_command(self):
+        """Clear the HOME command signal."""
+        from drivers.cvd_define import InputSignal
+        self.client.send_input_signal(signal=InputSignal.OFF, slave_id=self.slave_id)
+
     def is_homing(self) -> bool:
         """
         Check if motor is currently homing.
