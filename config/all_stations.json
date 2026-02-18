@@ -61,7 +61,7 @@
     ],
     "homing_required": true,
     "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 11.0
+    "video_sync_delay_sec": 10.50
   },
 
   "06": {
@@ -71,7 +71,7 @@
     ],
     "homing_required": true,
     "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 2.0
+    "video_sync_delay_sec": 1.50
   },
 
   "07": {
@@ -81,7 +81,7 @@
     ],
     "homing_required": true,
     "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 2.0,
+    "video_sync_delay_sec": 1.50,
     "led": {
       "enabled": true,
       "gpio_pin": 18,
@@ -98,7 +98,7 @@
     ],
     "homing_required": true,
     "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 2.0
+    "video_sync_delay_sec": 1.50
   },
 
   "09": {
@@ -109,7 +109,7 @@
     ],
     "homing_required": true,
     "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 2.0
+    "video_sync_delay_sec": 1.50
   },
 
   "10": {
