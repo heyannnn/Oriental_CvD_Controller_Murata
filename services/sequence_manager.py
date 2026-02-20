@@ -1,370 +1,266 @@
 """
-Sequence Manager - Main state machine coordinator
-Manages overall system state and coordinates motor controller + video player
+Sequence Manager - Master brain for Pi-02
+Receives keyboard input, sends OSC to all stations, receives status from all stations.
+Coordinates system-wide operations.
 """
 
 import logging
-from enum import Enum
+import threading
+import json
+
+try:
+    from pythonosc import udp_client
+    from pythonosc.dispatcher import Dispatcher
+    from pythonosc.osc_server import BlockingOSCUDPServer
+    OSC_AVAILABLE = True
+except ImportError:
+    OSC_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
 
-class SystemState(Enum):
-    """System-wide state machine"""
-    BOOT = "boot"
-    HOMING = "homing"
-    READY = "ready"
-    STANDBY = "standby"
-    RUNNING = "running"
-    FINISHED = "finished"
-    STOPPED = "stopped"
-    ERROR = "error"
-
-
 class SequenceManager:
     """
-    Main sequence coordinator.
-    Manages system state and coordinates all components.
-
-    Flow:
-      BOOT → HOMING → READY → (START) → STANDBY → RUNNING → FINISHED → READY
-                                  ↑                              ↓
-                                  └────────── (RESET) ──────────┘
+    Master sequence manager for Pi-02.
+    Coordinates all stations via OSC.
     """
 
-    def __init__(self, motor_controller, network_sync, config=None):
+    def __init__(self, config):
         """
         Initialize sequence manager.
 
         Args:
-            motor_controller: MotorController instance
-            network_sync: NetworkSync instance for OSC
-            config: Station config dict (optional)
+            config: Full config dict with all_stations info
         """
-        self.motor_controller = motor_controller
-        self.network_sync = network_sync
-        self.state = SystemState.BOOT
+        self.config = config
+        self.station_id = config.get('station_id', '02')
 
-        # Looping configuration
-        self.is_looping = False
-        self.cycle_count = 0
-        self.loop_delay_sec = config.get('loop_delay_sec', 3.0) if config else 3.0
+        # Load all stations config
+        self.all_stations = self._load_all_stations()
 
-        # Video synchronization (delay for first start only)
-        self.video_sync_delay_sec = config.get('video_sync_delay_sec', 1.0) if config else 1.0
+        # Track state of all stations
+        self.station_states = {}
+        for station_id in self.all_stations:
+            self.station_states[station_id] = "unknown"
 
-        logger.info("Sequence manager initialized")
-        logger.info(f"Video sync delay: {self.video_sync_delay_sec}s (first cycle only)")
+        # System state
+        self.is_running = False
+        self.is_resetting = False
 
-    async def initialize(self):
-        """
-        System initialization - auto-home motors.
-        Called on boot.
-        """
-        logger.info("=== SYSTEM BOOT ===")
-        self.state = SystemState.BOOT
+        # OSC clients for sending to stations
+        self.osc_clients = {}
+        if OSC_AVAILABLE:
+            self._init_osc_clients()
 
-        # Start motor homing
-        logger.info("Starting motor homing...")
-        self.state = SystemState.HOMING
+        # OSC server for receiving status
+        self.server = None
+        self.server_thread = None
+        if OSC_AVAILABLE:
+            self._init_osc_server()
 
-        # MotorController will callback when ready
-        await self.motor_controller.initialize()
+        # Callback to local motor controller
+        self._local_motor_controller = None
 
-    async def initialize_video_only(self):
-        """
-        System initialization for video-only stations (no motors).
-        Auto-starts video playback.
-        """
-        import asyncio
+        logger.info(f"Sequence manager initialized for {len(self.all_stations)} stations")
 
-        logger.info("=== SYSTEM BOOT (VIDEO ONLY) ===")
-        self.state = SystemState.BOOT
+    def _load_all_stations(self):
+        """Load all stations config"""
+        try:
+            with open('config/all_stations.json', 'r') as f:
+                data = json.load(f)
+                return data.get('stations', {})
+        except Exception as e:
+            logger.error(f"Failed to load all_stations.json: {e}")
+            return {}
 
-        # Enable looping mode
-        self.is_looping = True
-        self.cycle_count = 1
+    def _init_osc_clients(self):
+        """Create OSC clients for all stations"""
+        for station_id, station_config in self.all_stations.items():
+            host = station_config.get('host', f'pi-controller-{station_id}.local')
+            port = station_config.get('osc_port', 10000)
 
-        # Send start to video player (NormalOperation.csv)
-        logger.info("Sending START signal to video player...")
-        self.network_sync.send_video_command("start")
+            try:
+                client = udp_client.SimpleUDPClient(host, port)
+                self.osc_clients[station_id] = client
+                logger.info(f"OSC client for station {station_id}: {host}:{port}")
+            except Exception as e:
+                logger.error(f"Failed to create OSC client for station {station_id}: {e}")
 
-        # Wait for video sync delay
-        logger.info(f"Waiting {self.video_sync_delay_sec}s for video intro...")
-        await asyncio.sleep(self.video_sync_delay_sec)
+    def _init_osc_server(self):
+        """Initialize OSC server for receiving status from all stations"""
+        listen_port = self.config.get('network', {}).get('listen_port', 10000)
 
-        self.state = SystemState.RUNNING
-        logger.info("=== VIDEO ONLY STATION RUNNING ===")
+        dispatcher = Dispatcher()
+        dispatcher.map("/status", self._handle_status)
+        # Also handle commands sent to self (Pi-02)
+        dispatcher.map("/start", self._handle_start_osc)
+        dispatcher.map("/stop", self._handle_stop_osc)
+        dispatcher.map("/reset", self._handle_reset_osc)
 
-    def on_motor_ready(self):
-        """
-        Callback from MotorController when homing complete (or no homing needed).
-        Auto-starts operation: send video command, wait delay, start motors.
-        """
-        logger.info("=== MOTOR READY - AUTO STARTING ===")
+        try:
+            self.server = BlockingOSCUDPServer(("0.0.0.0", listen_port), dispatcher)
+            logger.info(f"OSC server listening on port {listen_port} (status + commands)")
+        except Exception as e:
+            logger.error(f"Failed to create OSC server: {e}")
 
-        # Auto-start operation after homing
-        import asyncio
-        if self.motor_controller and self.motor_controller._event_loop:
-            asyncio.run_coroutine_threadsafe(
-                self._auto_start_operation(),
-                self.motor_controller._event_loop
-            )
-        else:
-            # Fallback if no event loop (shouldn't happen)
-            logger.warning("No event loop available for auto-start")
-            self.state = SystemState.READY
+    def _handle_start_osc(self, address, *args):
+        """Handle /start OSC for local motor controller"""
+        if self._local_motor_controller:
+            self._local_motor_controller.on_start()
 
-    async def _auto_start_operation(self):
-        """
-        Auto-start operation after homing completes.
-        Sends video command, waits for sync delay, then starts motors.
-        """
-        import asyncio
+    def _handle_stop_osc(self, address, *args):
+        """Handle /stop OSC for local motor controller"""
+        if self._local_motor_controller:
+            self._local_motor_controller.on_stop()
 
-        # Enable looping mode
-        self.is_looping = True
-        self.cycle_count = 1
+    def _handle_reset_osc(self, address, *args):
+        """Handle /reset OSC for local motor controller"""
+        if self._local_motor_controller:
+            self._local_motor_controller.on_reset()
 
-        # Send start to video player (NormalOperation.csv)
-        logger.info("Sending START signal to video player...")
-        self.network_sync.send_video_command("start")
-
-        # Broadcast start to all stations (if this is master)
-        self.network_sync.broadcast_start()
-
-        # Wait for video sync delay
-        logger.info(f"Waiting {self.video_sync_delay_sec}s for video intro...")
-        await asyncio.sleep(self.video_sync_delay_sec)
-
-        # Start motor operation
-        logger.info(f"=== Starting cycle {self.cycle_count} ===")
-        self.state = SystemState.RUNNING
-
-        if self.motor_controller:
-            self.motor_controller.start_operation(op_no=0)
-
-        logger.info("=== SYSTEM RUNNING ===")
-
-    def on_motor_finished(self):
-        """
-        Callback from MotorController when operation finishes.
-        If looping is enabled, wait and restart the operation.
-        """
-        logger.info("=== OPERATION FINISHED ===")
-        self.state = SystemState.FINISHED
-
-        # Send finished signal to video player
-        self.network_sync.send_video_command("finished")
-
-        # Check if we should loop
-        if self.is_looping:
-            # Schedule next cycle
-            import asyncio
-            if self.motor_controller._event_loop:
-                asyncio.run_coroutine_threadsafe(
-                    self._loop_next_cycle(),
-                    self.motor_controller._event_loop
-                )
-            else:
-                logger.warning("Cannot loop - event loop not available")
-                self.state = SystemState.READY
-        else:
-            # Return to ready state
-            self.state = SystemState.READY
-            logger.info("System ready for next operation")
-
-    def on_motor_error(self, error_msg):
-        """
-        Callback from MotorController on error.
-        """
-        logger.error(f"=== MOTOR ERROR: {error_msg} ===")
-        self.state = SystemState.ERROR
-
-        # Send error to video player
-        self.network_sync.send_video_command("error", {"message": error_msg})
-
-    def on_return_to_zero_complete(self):
-        """
-        Callback from MotorController when return-to-zero motion completes.
-        This is called after stop() for stations with return_to_zero_on_stop enabled.
-        """
-        logger.info("=== RETURN TO ZERO COMPLETE ===")
-        logger.info("Motor has returned to home position (0)")
-
-        # Send finished signal to video player (optional, for video sync)
-        self.network_sync.send_video_command("returned_to_zero")
-
-    # ========================================================================
-    # Keyboard Commands (from KeyboardHandler)
-    # ========================================================================
-
-    async def on_start_pressed(self):
-        """
-        START button pressed (V key when not running).
-        Flow: READY → STANDBY → RUNNING (looping handled by video completion)
-        Waits video_sync_delay_sec before starting motor to sync with video intro.
-        """
-        if self.state != SystemState.READY and self.state != SystemState.STANDBY and self.state != SystemState.STOPPED:
-            logger.warning(f"Cannot start - system not ready (state={self.state.value})")
+    def start_server(self):
+        """Start OSC server in background thread"""
+        if not self.server:
             return
 
-        logger.info("=== START PRESSED ===")
+        self.server_thread = threading.Thread(
+            target=self.server.serve_forever,
+            daemon=True
+        )
+        self.server_thread.start()
+        logger.info("OSC status server started")
 
-        # Enable looping mode (will continue after each operation finishes)
-        self.is_looping = True
-        self.cycle_count = 1
+    def stop_server(self):
+        """Stop OSC server"""
+        if self.server:
+            self.server.shutdown()
 
-        # Move to standby
-        self.state = SystemState.STANDBY
-        logger.info("Sending START signal...")
+    def set_local_motor_controller(self, controller):
+        """Set reference to local motor controller"""
+        self._local_motor_controller = controller
 
-        # Send start to video player (first cycle uses NormalOperation.csv)
-        self.network_sync.send_video_command("start")
+    # ========================================================================
+    # Keyboard Input Handlers (called by key.py)
+    # ========================================================================
 
-        # Broadcast start to all stations (if this is master)
-        self.network_sync.broadcast_start()
+    def on_start_pressed(self):
+        """V key pressed when stopped - start all stations"""
+        if self.is_resetting:
+            logger.warning("Ignoring START - reset in progress")
+            return
 
-        # Wait for video intro to play before starting motor
-        import asyncio
-        logger.info(f"Waiting {self.video_sync_delay_sec}s for video intro to play...")
-        await asyncio.sleep(self.video_sync_delay_sec)
+        if self.is_running:
+            logger.warning("Already running")
+            return
 
-        # Start motor operation
-        logger.info(f"=== Starting cycle {self.cycle_count} ===")
-        self.state = SystemState.RUNNING
+        logger.info("=" * 70)
+        logger.info("START PRESSED - Sending /start to all stations")
+        logger.info("=" * 70)
 
-        # Start operation 0 (or read from config)
-        if self.motor_controller:
-            self.motor_controller.start_operation(op_no=0)
-
-        logger.info("=== SYSTEM RUNNING ===")
+        self.is_running = True
+        self._send_to_all("/start")
 
     def on_stop_pressed(self):
-        """
-        STOP button pressed (V key when running).
-        Stop motors (return to zero if configured) and disable looping.
-        """
-        logger.info("=== STOP PRESSED ===")
+        """V key pressed when running - stop all stations"""
+        logger.info("=" * 70)
+        logger.info("STOP PRESSED - Sending /stop to all stations")
+        logger.info("=" * 70)
 
-        # Disable looping mode
-        self.is_looping = False
-        logger.info("Looping mode disabled")
+        self.is_running = False
+        self._send_to_all("/stop")
 
-        # Stop motor (may return to zero depending on config)
-        if self.motor_controller:
-            self.motor_controller.stop()
+    def on_reset_pressed(self):
+        """Ctrl+V pressed - reset all stations (stop, home, wait)"""
+        logger.info("=" * 70)
+        logger.info("RESET PRESSED - Sending /reset to all stations")
+        logger.info("=" * 70)
 
-        # Send stop to video player
-        self.network_sync.send_video_command("stop")
+        self.is_running = False
+        self.is_resetting = True
+        self._send_to_all("/reset")
 
-        # Broadcast stop to all stations
-        self.network_sync.broadcast_stop()
+    def get_is_running(self):
+        """Check if system is running (for V key toggle)"""
+        return self.is_running
 
-        self.state = SystemState.STANDBY
-        logger.info("System in standby - motors at position 0 or stopped")
+    # ========================================================================
+    # OSC Send
+    # ========================================================================
 
-    async def _loop_next_cycle(self):
-        """
-        Internal method to handle looping delay and restart.
-        Called from on_motor_finished when looping is enabled.
-        """
-        import asyncio
+    def _send_to_all(self, command):
+        """Send OSC command to all stations"""
+        for station_id, client in self.osc_clients.items():
+            try:
+                client.send_message(command, [])
+                logger.info(f"  Sent {command} to station {station_id}")
+            except Exception as e:
+                logger.error(f"  Failed to send {command} to station {station_id}: {e}")
 
-        # Wait for the configured delay
-        logger.info(f"Waiting {self.loop_delay_sec}s before next cycle...")
-        await asyncio.sleep(self.loop_delay_sec)
+    # ========================================================================
+    # OSC Receive (Status from stations)
+    # ========================================================================
 
-        # Check if looping is still enabled (user might have pressed stop during delay)
-        if not self.is_looping:
-            logger.info("Looping cancelled")
-            self.state = SystemState.READY
+    def _handle_status(self, address, *args):
+        """Handle /status [station_id] [state] from stations"""
+        if len(args) < 2:
             return
 
-        # Increment cycle count and restart
-        self.cycle_count += 1
-        logger.info(f"=== Starting cycle {self.cycle_count} ===")
-        self.state = SystemState.RUNNING
+        station_id = str(args[0])
+        state = str(args[1])
 
-        # Send standby signal to reload Sync.csv for this cycle
-        self.network_sync.send_video_command("standby")
+        old_state = self.station_states.get(station_id, "unknown")
+        self.station_states[station_id] = state
 
-        # Start operation 0 again
-        self.motor_controller.start_operation(op_no=0)
+        if old_state != state:
+            logger.info(f"Station {station_id}: {old_state} -> {state}")
+            # Log summary when state changes
+            self._log_status_summary()
 
-    async def on_reset_pressed(self):
-        """
-        RESET button pressed.
-        Return to home and ready state.
-        """
-        logger.info("=== RESET PRESSED ===")
+        # Check if all stations homed (after reset)
+        if self.is_resetting:
+            if self._check_all_stations_homed():
+                logger.info("=" * 70)
+                logger.info("All stations HOME_END - Reset complete, waiting for V")
+                logger.info("=" * 70)
+                self.is_resetting = False
 
-        # Disable looping
-        self.is_looping = False
+    def _log_status_summary(self):
+        """Log a summary of all station states grouped by state"""
+        # Group stations by state
+        by_state = {}
+        for sid, state in self.station_states.items():
+            if state not in by_state:
+                by_state[state] = []
+            by_state[state].append(sid)
 
-        # Stop everything first
-        self.motor_controller.stop()
-        self.network_sync.send_video_command("reset")
-        self.network_sync.broadcast_reset()
+        # Build summary line
+        parts = []
+        for state in ['homing', 'resetting', 'error', 'home_end', 'running', 'ready', 'unknown', 'disconnected']:
+            if state in by_state:
+                stations = ','.join(sorted(by_state[state]))
+                parts.append(f"{state.upper()}:[{stations}]")
 
-        # Reset to home
-        logger.info("Resetting to home position...")
-        self.state = SystemState.HOMING
-        await self.motor_controller.reset_to_home()
+        if parts:
+            logger.info(f"  Status: {' | '.join(parts)}")
 
-        # MotorController will callback on_motor_ready when done
+    def _check_all_stations_homed(self):
+        """Check if all stations are in HOME_END state"""
+        for station_id, state in self.station_states.items():
+            if state != "home_end":
+                return False
+        return True
 
-    def on_clear_alarm_pressed(self):
-        """
-        CLEAR ALARM button pressed (Ctrl key).
-        Clear motor alarm and attempt recovery.
-        """
-        logger.info("=== CLEAR ALARM PRESSED ===")
-
-        if self.motor_controller:
-            self.motor_controller.clear_alarm()
-
-            # If in error state, try to return to ready
-            if self.state == SystemState.ERROR:
-                self.state = SystemState.READY
-                logger.info("System recovered from error state")
-        else:
-            logger.warning("No motor controller - cannot clear alarm")
-
-    # ========================================================================
-    # OSC Network Commands (received from station 2)
-    # ========================================================================
-
-    async def on_network_start(self):
-        """
-        START command received via OSC (for non-keyboard stations).
-        Same as on_start_pressed but without keyboard.
-        """
-        logger.info("START command received via network")
-        await self.on_start_pressed()
-
-    def on_network_stop(self):
-        """STOP command received via OSC"""
-        logger.info("STOP command received via network")
-        self.on_stop_pressed()
-
-    async def on_network_reset(self):
-        """RESET command received via OSC"""
-        logger.info("RESET command received via network")
-        await self.on_reset_pressed()
+    def get_all_station_states(self):
+        """Get dictionary of all station states"""
+        return self.station_states.copy()
 
     # ========================================================================
     # Status
     # ========================================================================
 
-    def get_state(self) -> SystemState:
-        """Get current system state"""
-        return self.state
-
-    def is_ready(self) -> bool:
-        """Check if system is ready"""
-        return self.state == SystemState.READY
-
-    def is_running(self) -> bool:
-        """Check if system is currently running (for V key toggle)"""
-        return self.state == SystemState.RUNNING
+    def get_status_summary(self):
+        """Get summary of all station states"""
+        summary = []
+        for station_id, state in sorted(self.station_states.items()):
+            summary.append(f"{station_id}:{state}")
+        return " | ".join(summary)

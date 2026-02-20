@@ -11,126 +11,134 @@
     },
     "network": {
       "listen_port": 10000,
-      "send_port": 10001,
       "video_player_ip": "127.0.0.1",
-      "video_player_port": 9000
-    },
-    "keyboard": {
-      "enabled": false,
-      "type": "usb"
-    },
-    "led": {
-      "enabled": false
+      "video_player_port": 9000,
+      "master_ip": "192.168.1.2",
+      "master_port": 10000
     },
     "loop_delay_sec": 0.0
   },
 
+  "stations": {
+    "02": {
+      "station_name": "工程2",
+      "host": "192.168.1.2",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+      ],
+      "homing_required": false,
+      "return_to_zero_on_stop": false
+    },
 
-  "02": {
-    "station_name": "工程2",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ],
-    "homing_required": false,
-    "return_to_zero_on_stop": false
-  },
+    "03": {
+      "station_name": "工程3",
+      "host": "192.168.1.3",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
+        {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
+      ],
+      "homing_required": false,
+      "return_to_zero_on_stop": false
+    },
 
-  "03": {
-    "station_name": "工程3",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ],
-    "homing_required": false,
-    "return_to_zero_on_stop": false
-  },
+    "04": {
+      "station_name": "工程4 (3-Motor)",
+      "host": "192.168.1.4",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
+        {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"},
+        {"name": "motor_3", "slave_id": 2, "type": "CVD-28-KR"}
+      ],
+      "homing_required": false,
+      "return_to_zero_on_stop": false
+    },
 
-  "04": {
-    "station_name": "工程4 (3-Motor)",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
-      {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
-    ],
-    "homing_required": false,
-    "return_to_zero_on_stop": false
-  },
+    "05": {
+      "station_name": "工程5",
+      "host": "192.168.1.5",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+      ],
+      "homing_required": true,
+      "return_to_zero_on_stop": true,
+      "check_homes_during_running": true,
+      "video_sync_delay_sec": 10.50
+    },
 
-  "05": {
-    "station_name": "工程5",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ],
-    "homing_required": true,
-    "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 10.50
-  },
+    "06": {
+      "station_name": "工程6",
+      "host": "192.168.1.6",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+      ],
+      "homing_required": true,
+      "return_to_zero_on_stop": true,
+      "video_sync_delay_sec": 1.50
+    },
 
-  "06": {
-    "station_name": "工程6",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ],
-    "homing_required": true,
-    "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 1.50
-  },
+    "07": {
+      "station_name": "工程7 (LED)",
+      "host": "192.168.1.7",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+      ],
+      "homing_required": true,
+      "return_to_zero_on_stop": true,
+      "video_sync_delay_sec": 1.50
+    },
 
-  "07": {
-    "station_name": "工程7 (LED)",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ],
-    "homing_required": true,
-    "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 1.50,
-    "led": {
-      "enabled": true,
-      "gpio_pin": 18,
-      "pixel_count": 60,
-      "brightness": 128
+    "08": {
+      "station_name": "工程8 (2-Motor)",
+      "host": "192.168.1.8",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
+        {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
+      ],
+      "homing_required": true,
+      "return_to_zero_on_stop": true,
+      "check_homes_during_running": true,
+      "video_sync_delay_sec": 1.50
+    },
+
+    "09": {
+      "station_name": "工程9 (2-Motor)",
+      "host": "192.168.1.9",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
+        {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
+      ],
+      "homing_required": true,
+      "return_to_zero_on_stop": true,
+      "check_homes_during_running": true,
+      "video_sync_delay_sec": 1.50
+    },
+
+    "10": {
+      "station_name": "工程10 (LED)",
+      "host": "192.168.1.10",
+      "osc_port": 10000,
+      "motors": [
+        {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
+      ],
+      "homing_required": false,
+      "return_to_zero_on_stop": false
+    },
+
+    "11": {
+      "station_name": "工程11 (Video Only)",
+      "host": "192.168.1.11",
+      "osc_port": 10000,
+      "motors": [],
+      "homing_required": false,
+      "return_to_zero_on_stop": false
     }
-  },
-
-  "08": {
-    "station_name": "工程8 (2-Motor)",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
-      {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
-    ],
-    "homing_required": true,
-    "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 1.50
-  },
-
-  "09": {
-    "station_name": "工程9 (2-Motor)",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
-      {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"}
-    ],
-    "homing_required": true,
-    "return_to_zero_on_stop": true,
-    "video_sync_delay_sec": 1.50
-  },
-
-  "10": {
-    "station_name": "工程10 (LED)",
-    "motors": [
-      {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
-    ],
-    "homing_required": false,
-    "return_to_zero_on_stop": false,
-    "led": {
-      "enabled": true,
-      "gpio_pin": 18,
-      "pixel_count": 60,
-      "brightness": 128
-    }
-  },
-
-  "11": {
-    "station_name": "工程11 (Video Only)",
-    "motors": [],
-    "homing_required": false,
-    "return_to_zero_on_stop": false
   }
 }

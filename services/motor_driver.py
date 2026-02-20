@@ -336,6 +336,38 @@ class MotorDriver:
         op_no = self.client.read_monitor(MonitorCommand.RUNNING_DATA_NO, slave_id=self.slave_id)
         return op_no
 
+    def is_homes_detected(self) -> bool:
+        """
+        Check if HOMES (mechanical home sensor) is detected.
+
+        Note: HOMES is an input signal. This reads the Direct I/O monitor
+        to check if the HOMES input is active.
+
+        Returns:
+            True if HOMES sensor is active
+        """
+        from drivers.cvd_define import MonitorCommand
+
+        # Read Direct I/O status (contains input states)
+        # DIRECT_IO register shows the state of input signals
+        direct_io = self.client.read_monitor(MonitorCommand.DIRECT_IO, slave_id=self.slave_id)
+
+        if direct_io is None:
+            return False
+
+        # HOMES is typically assigned to a specific input bit
+        # Check bit 4 (R-IN4) which is often assigned to HOME signal
+        # You may need to adjust this based on your MEXE02 configuration
+        # InputAssignment.HOMES = 30 is the function, but we need to check
+        # which R-IN it's assigned to
+
+        # For now, check if bit for HOMES input is set
+        # This assumes HOMES is on the default R-IN assignment
+        # Bit 4 = HOME input (0x0010)
+        homes_bit = 0x0010  # Adjust if HOMES is on different input
+
+        return (direct_io & homes_bit) != 0
+
     def get_detailed_status(self) -> dict:
         """
         Read and parse detailed status from register 0x007F.

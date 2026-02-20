@@ -1,299 +1,203 @@
 #!/usr/bin/env python3
 """
-Keyboard Control Script for Multi-Station System
-Runs on master Pi (Pi-02) to control all stations via OSC
-
-Usage:
-    python key.py
+Keyboard Controller - USB keyboard input for master station (Pi-02)
+Monitors V and Ctrl+V keys for system control.
 
 Controls:
-    V key - Start/Stop toggle
-    Ctrl+any - Clear alarm
-    Ctrl+C - Exit
+    V key    - Toggle start/stop
+    Ctrl+V   - Reset (stop all, home all, wait for V)
+    Ctrl+C   - Exit
 
-This script will:
-    1. SSH into all Pis and launch main.py automatically
-    2. Wait for all stations to initialize
-    3. Listen for keyboard input to send OSC commands
-
-Requirements:
-    - sshpass installed: sudo apt install sshpass
-    - Network connectivity to all station Pis
+This script is launched by main.py on Pi-02 only.
+Uses evdev to read directly from USB keyboard (works without terminal).
 """
 
 import logging
-import asyncio
-import subprocess
-import readchar
-from pythonosc import udp_client
+import threading
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
-)
+try:
+    import evdev
+    from evdev import ecodes
+    EVDEV_AVAILABLE = True
+except ImportError:
+    EVDEV_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Configuration
-# ============================================================================
 
-# SSH credentials (same for all Pis)
-SSH_USER = "user"
-SSH_PASSWORD = "fukuimurata"
-MAIN_PY_PATH = "/home/user/Desktop/ORIENTAL_CVD_CONTROLLER_MURATA"
+def find_keyboard():
+    """Find the first keyboard device."""
+    devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+    for device in devices:
+        capabilities = device.capabilities()
+        # Check if device has KEY events and has typical keyboard keys
+        if ecodes.EV_KEY in capabilities:
+            keys = capabilities[ecodes.EV_KEY]
+            # Check for typical keyboard keys (letters, ctrl, etc.)
+            if ecodes.KEY_V in keys and ecodes.KEY_LEFTCTRL in keys:
+                return device
+    return None
 
-# All station hostnames and ports
-STATIONS = {
-    "02": {"host": "pi-controller-02.local", "port": 10000},
-    "03": {"host": "pi-controller-03.local", "port": 10000},
-    "04": {"host": "pi-controller-04.local", "port": 10000},
-    "05": {"host": "pi-controller-05.local", "port": 10000},
-    "06": {"host": "pi-controller-06.local", "port": 10000},
-    "07": {"host": "pi-controller-07.local", "port": 10000},
-    "08": {"host": "pi-controller-08.local", "port": 10000},
-    "09": {"host": "pi-controller-09.local", "port": 10000},
-    "10": {"host": "pi-controller-10.local", "port": 10000},
-    "11": {"host": "pi-controller-11.local", "port": 10000},
-}
-
-# Track SSH processes for cleanup
-ssh_processes = []
-
-# ============================================================================
-# OSC Clients
-# ============================================================================
-
-osc_clients = {}
-
-def initialize_osc_clients():
-    """Create OSC clients for all stations"""
-    global osc_clients
-
-    for station_id, config in STATIONS.items():
-        try:
-            client = udp_client.SimpleUDPClient(config["host"], config["port"])
-            osc_clients[station_id] = client
-            logger.info(f"OSC client created for station {station_id} ({config['host']}:{config['port']})")
-        except Exception as e:
-            logger.error(f"Failed to create OSC client for station {station_id}: {e}")
-
-
-# ============================================================================
-# SSH Launch Functions
-# ============================================================================
-
-def launch_all_stations():
-    """Launch main.py on all stations via SSH"""
-    global ssh_processes
-
-    logger.info("=" * 70)
-    logger.info("LAUNCHING main.py ON ALL STATIONS")
-    logger.info("=" * 70)
-
-    for station_id, config in STATIONS.items():
-        host = config["host"]
-
-        try:
-            # SSH command to start main.py in background
-            # Activate venv first, then run main.py
-            # Set DISPLAY=:0 so video player can access the screen
-            # Using nohup so it keeps running after SSH disconnects
-            ssh_cmd = [
-                "sshpass", "-p", SSH_PASSWORD,
-                "ssh", "-o", "StrictHostKeyChecking=no",
-                f"{SSH_USER}@{host}",
-                f"cd {MAIN_PY_PATH} && source venv/bin/activate && export DISPLAY=:0 && nohup python main.py > /tmp/main_{station_id}.log 2>&1 &"
-            ]
-
-            logger.info(f"Launching station {station_id} ({host})...")
-            process = subprocess.Popen(
-                ssh_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            ssh_processes.append(process)
-            logger.info(f"✓ Station {station_id} launch command sent")
-
-        except Exception as e:
-            logger.error(f"✗ Failed to launch station {station_id}: {e}")
-
-    logger.info("=" * 70)
-    logger.info(f"Launch commands sent to {len(STATIONS)} stations")
-    logger.info("Waiting 10 seconds for all stations to initialize...")
-    logger.info("=" * 70)
-
-
-def stop_all_stations():
-    """Stop main.py and video player on all stations via SSH"""
-    logger.info("=" * 70)
-    logger.info("STOPPING main.py AND video player ON ALL STATIONS")
-    logger.info("=" * 70)
-
-    for station_id, config in STATIONS.items():
-        host = config["host"]
-
-        try:
-            # SSH command to kill main.py and video player
-            ssh_cmd = [
-                "sshpass", "-p", SSH_PASSWORD,
-                "ssh", "-o", "StrictHostKeyChecking=no",
-                f"{SSH_USER}@{host}",
-                "pkill -f 'python main.py'; pkill -f 'osc_mpv_playlist'"
-            ]
-
-            subprocess.run(ssh_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logger.info(f"✓ Station {station_id} stopped")
-
-        except Exception as e:
-            logger.error(f"✗ Failed to stop station {station_id}: {e}")
-
-# ============================================================================
-# OSC Commands
-# ============================================================================
-
-def send_start_command():
-    """Send start command to all stations"""
-    logger.info("=" * 70)
-    logger.info("SENDING START COMMAND TO ALL STATIONS")
-    logger.info("=" * 70)
-
-    for station_id, client in osc_clients.items():
-        try:
-            client.send_message("/start", 1)
-            logger.info(f"✓ Start command sent to station {station_id}")
-        except Exception as e:
-            logger.error(f"✗ Failed to send start to station {station_id}: {e}")
-
-def send_stop_command():
-    """Send stop command to all stations"""
-    logger.info("=" * 70)
-    logger.info("SENDING STOP COMMAND TO ALL STATIONS")
-    logger.info("=" * 70)
-
-    for station_id, client in osc_clients.items():
-        try:
-            client.send_message("/stop", 1)
-            logger.info(f"✓ Stop command sent to station {station_id}")
-        except Exception as e:
-            logger.error(f"✗ Failed to send stop to station {station_id}: {e}")
-
-def send_clear_alarm_command():
-    """Send clear alarm command to all stations"""
-    logger.info("=" * 70)
-    logger.info("SENDING CLEAR ALARM COMMAND TO ALL STATIONS")
-    logger.info("=" * 70)
-
-    for station_id, client in osc_clients.items():
-        try:
-            client.send_message("/clear_alarm", 1)
-            logger.info(f"✓ Clear alarm command sent to station {station_id}")
-        except Exception as e:
-            logger.error(f"✗ Failed to send clear alarm to station {station_id}: {e}")
-
-# ============================================================================
-# Keyboard Handler
-# ============================================================================
 
 class KeyboardController:
-    def __init__(self):
-        # Start as True because stations auto-start after boot/homing
-        self.is_running = True
-        self._active = True
+    """
+    USB keyboard handler for master control station.
+    Keys: V (start/stop toggle), Ctrl+V (reset)
+    Uses evdev for direct keyboard access (works in background/systemd).
+    """
 
-    async def handle_keyboard(self):
-        """Async keyboard handler using readchar"""
+    def __init__(self):
+        """Initialize keyboard controller."""
+        if not EVDEV_AVAILABLE:
+            raise ImportError("evdev not available - install with: pip install evdev")
+
+        self._device = find_keyboard()
+        if not self._device:
+            raise RuntimeError("No keyboard found. Make sure user is in 'input' group: sudo usermod -aG input $USER")
+
+        # Callbacks (set by sequence_manager or main.py)
+        self._on_start = None
+        self._on_stop = None
+        self._on_reset = None
+        self._get_is_running = None  # Callback to check if system is running
+
+        # Track modifier keys
+        self._ctrl_pressed = False
+
+        # Thread control
+        self._running = True
+        self._thread = None
+
+        logger.info(f"Keyboard controller initialized using: {self._device.name}")
+        logger.info("Controls: V=toggle start/stop, Ctrl+V=reset")
+
+    def set_on_start(self, callback):
+        """Set callback for START (V key when stopped)"""
+        self._on_start = callback
+
+    def set_on_stop(self, callback):
+        """Set callback for STOP (V key when running)"""
+        self._on_stop = callback
+
+    def set_on_reset(self, callback):
+        """Set callback for RESET (Ctrl+V)"""
+        self._on_reset = callback
+
+    def set_get_is_running(self, callback):
+        """Set callback to check if system is currently running"""
+        self._get_is_running = callback
+
+    def start(self):
+        """Start keyboard listener in background thread"""
+        self._thread = threading.Thread(target=self._keyboard_loop, daemon=True)
+        self._thread.start()
         logger.info("Keyboard listener started")
 
-        while self._active:
-            try:
-                # Read single character (blocking in executor)
-                loop = asyncio.get_event_loop()
-                key = await loop.run_in_executor(None, readchar.readchar)
-
-                logger.info(f"KEY DETECTED: '{key}'")
-
-                # V key - Start/Stop toggle
-                if key.lower() == 'v':
-                    if self.is_running:
-                        # Stop operation
-                        send_stop_command()
-                        self.is_running = False
-                        logger.info("\n=== OPERATION STOPPED ===\n")
-                    else:
-                        # Start operation
-                        send_start_command()
-                        self.is_running = True
-                        logger.info("\n=== OPERATION STARTED ===\n")
-
-                # Ctrl+C - Exit program
-                elif key == '\x03':  # Ctrl+C is ASCII 3
-                    logger.info("\n=== Ctrl+C detected - Exiting ===\n")
-                    self._active = False
+    def _keyboard_loop(self):
+        """Background thread that reads keyboard input via evdev"""
+        try:
+            for event in self._device.read_loop():
+                if not self._running:
                     break
 
-                # Other Ctrl key combinations - Clear alarm
-                elif ord(key) < 32 and key != '\r' and key != '\n':
-                    logger.info(f"\n=== CLEAR ALARM (Ctrl detected) ===\n")
-                    send_clear_alarm_command()
+                if event.type != ecodes.EV_KEY:
+                    continue
 
-            except Exception as e:
-                if self._active:
-                    logger.error(f"Error handling key press: {e}")
+                # Track Ctrl key state
+                if event.code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
+                    self._ctrl_pressed = (event.value == 1)  # 1 = pressed, 0 = released
+                    continue
+
+                # Only handle key press (value=1), not release (value=0) or repeat (value=2)
+                if event.value != 1:
+                    continue
+
+                # V key
+                if event.code == ecodes.KEY_V:
+                    if self._ctrl_pressed:
+                        # Ctrl+V - Reset
+                        logger.info("Ctrl+V pressed: RESET")
+                        if self._on_reset:
+                            self._on_reset()
+                    else:
+                        # V only - Toggle start/stop
+                        is_running = self._get_is_running() if self._get_is_running else False
+
+                        if is_running:
+                            logger.info("V key pressed: STOP")
+                            if self._on_stop:
+                                self._on_stop()
+                        else:
+                            logger.info("V key pressed: START")
+                            if self._on_start:
+                                self._on_start()
+
+        except Exception as e:
+            if self._running:
+                logger.error(f"Keyboard read error: {e}")
 
     def stop(self):
         """Stop keyboard listener"""
-        self._active = False
-        logger.info("Keyboard listener stopped")
+        self._running = False
+        logger.info("Keyboard controller stopped")
 
-# ============================================================================
-# Main
-# ============================================================================
 
-async def main():
-    logger.info("=" * 70)
-    logger.info("Multi-Station Keyboard Controller - Master Pi")
-    logger.info("=" * 70)
-
-    # Launch main.py on all stations via SSH
-    launch_all_stations()
-
-    # Wait for stations to initialize
-    await asyncio.sleep(10)
-
-    # Initialize OSC clients
-    initialize_osc_clients()
-
-    logger.info("\n" + "=" * 70)
-    logger.info("All stations should now be running!")
-    logger.info("=" * 70)
-
-    logger.info("\n" + "=" * 70)
-    logger.info("Keyboard Controls:")
-    logger.info("  V key - Start/Stop toggle")
-    logger.info("  Ctrl+any - Clear alarm on all stations")
-    logger.info("  Ctrl+C - Exit and stop all stations")
-    logger.info("=" * 70 + "\n")
-
-    # Create keyboard controller
-    controller = KeyboardController()
-
-    try:
-        # Run keyboard handler
-        await controller.handle_keyboard()
-
-    except KeyboardInterrupt:
-        logger.info("\nCtrl+C detected - shutting down")
-
-    # Stop all stations when exiting
-    controller.stop()
-    stop_all_stations()
-    logger.info("Shutdown complete")
-
+# For standalone testing
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+
+    print("=" * 50)
+    print("Keyboard Controller Test (evdev)")
+    print("=" * 50)
+    print("  V key    - Toggle (prints START/STOP)")
+    print("  Ctrl+V   - Reset (prints RESET)")
+    print("  Ctrl+C   - Exit")
+    print("=" * 50)
+
+    # List available devices
+    print("\nAvailable input devices:")
+    for path in evdev.list_devices():
+        device = evdev.InputDevice(path)
+        print(f"  {path}: {device.name}")
+    print()
+
+    is_running = False
+
+    def on_start():
+        global is_running
+        is_running = True
+        print(">>> START <<<")
+
+    def on_stop():
+        global is_running
+        is_running = False
+        print(">>> STOP <<<")
+
+    def on_reset():
+        global is_running
+        is_running = False
+        print(">>> RESET <<<")
+
+    def get_is_running():
+        return is_running
+
+    controller = KeyboardController()
+    controller.set_on_start(on_start)
+    controller.set_on_stop(on_stop)
+    controller.set_on_reset(on_reset)
+    controller.set_get_is_running(get_is_running)
+
+    controller.start()
+
     try:
-        asyncio.run(main())
+        # Keep main thread alive
+        import time
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
-        pass  # Already handled in main()
+        controller.stop()
+        print("\nExiting...")

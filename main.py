@@ -7,9 +7,18 @@ Usage:
     python main.py
 
 Configuration:
-    - config/local.json: Defines which station this Pi is
-    - config/network_master.json: Defines keyboard/master controller settings
-    - config/all_stations.json: All station motor configurations
+    - config/local.json: Defines which station this Pi is (only difference per Pi)
+    - config/all_stations.json: All station configurations (same on all Pis)
+
+Station 02 (Master):
+    - Also launches key.py and sequence_manager for keyboard control
+    - Sends OSC commands to all stations
+    - Receives status from all stations
+
+Stations 03-11:
+    - Receives OSC commands from master
+    - Sends status back to master
+    - Controls local motors and video
 """
 
 import sys
@@ -18,20 +27,29 @@ import asyncio
 import logging
 import json
 import os
+import threading
 
-# Setup logging first
+# Setup logging - will add file handler after we know station_id
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     datefmt='%H:%M:%S'
 )
 
-from services.motor_controller import MotorController
-from services.sequence_manager import SequenceManager
-from services.network_sync import NetworkSync
-from services.keyboard_handler import KeyboardHandler
-
 logger = logging.getLogger(__name__)
+
+
+def setup_file_logging(station_id):
+    """Add file logging to /tmp/main_XX.log"""
+    log_file = f"/tmp/main_{station_id}.log"
+    file_handler = logging.FileHandler(log_file, mode='a')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%H:%M:%S'
+    ))
+    logging.getLogger().addHandler(file_handler)
+    logger.info(f"Logging to {log_file}")
 
 
 # ============================================================================
@@ -65,26 +83,13 @@ def load_local_config():
         return json.load(f)
 
 
-def load_network_master_config():
-    """Load network_master.json to see if this Pi controls others"""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    master_path = os.path.join(script_dir, 'config', 'network_master.json')
-
-    if not os.path.exists(master_path):
-        # If no network master config, return disabled
-        return {'enabled': False, 'keyboard': {'enabled': False}}
-
-    with open(master_path, 'r') as f:
-        return json.load(f)
-
-
 def load_station_config(station_id):
     """
     Load station configuration from all_stations.json
 
     Loads:
       1. config/all_stations.json['default'] (shared settings)
-      2. config/all_stations.json[station_id] (station-specific)
+      2. config/all_stations.json['stations'][station_id] (station-specific)
       3. Merges default + station-specific
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -100,19 +105,23 @@ def load_station_config(station_id):
     # Get default config
     default_config = all_stations.get('default', {})
 
+    # Get stations dict
+    stations = all_stations.get('stations', all_stations)
+
     # Get station-specific config
-    if station_id not in all_stations:
+    if station_id not in stations:
         logger.error(f"Station '{station_id}' not found in all_stations.json")
-        logger.error(f"Available stations: {', '.join([k for k in all_stations.keys() if not k.startswith('_') and k != 'default'])}")
+        available = [k for k in stations.keys() if not k.startswith('_') and k != 'default']
+        logger.error(f"Available stations: {', '.join(available)}")
         sys.exit(1)
 
-    station_config = all_stations[station_id]
+    station_config = stations[station_id]
 
     # Merge default + station-specific
     config = deep_merge(default_config, station_config)
     config['station_id'] = station_id
 
-    logger.info(f"Loaded station config: all_stations.json['{station_id}']")
+    logger.info(f"Loaded config for station {station_id}")
     return config
 
 
@@ -122,8 +131,8 @@ def load_station_config(station_id):
 
 motor_controller = None
 sequence_manager = None
-network_sync = None
-keyboard_handler = None
+keyboard_controller = None
+
 
 # ============================================================================
 # Signal Handlers
@@ -137,15 +146,132 @@ def shutdown(signum, frame):
         motor_controller.stop()
         motor_controller.close()
 
-    if network_sync:
-        network_sync.stop()
+    if sequence_manager:
+        sequence_manager.stop_server()
 
-    if keyboard_handler:
-        keyboard_handler.close()
-
+    if keyboard_controller:
+        keyboard_controller.stop()
 
     logger.info("Shutdown complete")
     sys.exit(0)
+
+
+# ============================================================================
+# Video-Only Controller (for stations without motors, like station 11)
+# ============================================================================
+
+class VideoOnlyController:
+    """Simple controller for video-only stations - just sends status back to master"""
+
+    def __init__(self, config):
+        self.config = config
+        self.station_id = config.get('station_id', '00')
+        self.state = "home_end"  # Always ready
+
+        # Video player
+        from services.mp4_player import MP4Player
+        self.mp4_player = MP4Player(config)
+
+        # OSC client for sending status to master
+        self.master_ip = config.get('network', {}).get('master_ip', '192.168.1.2')
+        self.master_port = config.get('network', {}).get('master_port', 10000)
+        self.status_client = None
+
+        try:
+            from pythonosc import udp_client
+            self.status_client = udp_client.SimpleUDPClient(self.master_ip, self.master_port)
+        except Exception as e:
+            logger.warning(f"Could not create status client: {e}")
+
+        logger.info(f"Video-only controller initialized (station {self.station_id})")
+
+    def _send_status(self):
+        """Send status to master"""
+        if self.status_client:
+            try:
+                self.status_client.send_message("/status", [self.station_id, self.state])
+                logger.debug(f"Sent status: {self.state}")
+            except Exception as e:
+                logger.warning(f"Failed to send status: {e}")
+
+    def on_start(self):
+        logger.info("=== START RECEIVED (video only) ===")
+        self.state = "running"
+        self.mp4_player.send_command("start")
+        self._send_status()
+
+    def on_stop(self):
+        logger.info("=== STOP RECEIVED (video only) ===")
+        self.state = "home_end"
+        self.mp4_player.send_command("stop")
+        self._send_status()
+
+    def on_reset(self):
+        logger.info("=== RESET RECEIVED (video only) ===")
+        self.state = "home_end"
+        self.mp4_player.send_command("stop")
+        self._send_status()
+
+    async def initialize(self):
+        """Send initial status to master"""
+        self._send_status()
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+
+# ============================================================================
+# OSC Listener for receiving commands
+# ============================================================================
+
+def setup_osc_listener(config, controller):
+    """Setup OSC listener for receiving /start, /stop, /reset commands"""
+    try:
+        from pythonosc.dispatcher import Dispatcher
+        from pythonosc.osc_server import BlockingOSCUDPServer
+    except ImportError:
+        logger.warning("python-osc not available, OSC disabled")
+        return None
+
+    listen_port = config.get('network', {}).get('listen_port', 10000)
+
+    dispatcher = Dispatcher()
+
+    # Map OSC commands to controller methods (motor or video-only)
+    def handle_start(address, *args):
+        logger.info("Received /start via OSC")
+        if controller:
+            controller.on_start()
+
+    def handle_stop(address, *args):
+        logger.info("Received /stop via OSC")
+        if controller:
+            controller.on_stop()
+
+    def handle_reset(address, *args):
+        logger.info("Received /reset via OSC")
+        if controller:
+            controller.on_reset()
+
+    dispatcher.map("/start", handle_start)
+    dispatcher.map("/stop", handle_stop)
+    dispatcher.map("/reset", handle_reset)
+
+    try:
+        server = BlockingOSCUDPServer(("0.0.0.0", listen_port), dispatcher)
+        logger.info(f"OSC listener on port {listen_port}")
+
+        # Start server in background thread
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        return server
+    except Exception as e:
+        logger.error(f"Failed to start OSC listener: {e}")
+        return None
 
 
 # ============================================================================
@@ -153,10 +279,7 @@ def shutdown(signum, frame):
 # ============================================================================
 
 async def main():
-    global motor_controller, sequence_manager, network_sync, keyboard_handler
-
-    # Store event loop reference for keyboard callbacks
-    loop = asyncio.get_event_loop()
+    global motor_controller, sequence_manager, keyboard_controller
 
     # Load local configuration (which station am I?)
     local_config = load_local_config()
@@ -166,147 +289,91 @@ async def main():
         logger.error("station_id not found in config/local.json")
         sys.exit(1)
 
+    # Setup file logging to /tmp/main_XX.log
+    setup_file_logging(station_id)
+
     # Load station configuration
     config = load_station_config(station_id)
 
-    # Load network master configuration (separate from station)
-    network_master_config = load_network_master_config()
-
-    # Apply network master settings if enabled
-    if network_master_config.get('enabled'):
-        config['network']['is_sender'] = True
-        # Build target IPs from station list
-        target_stations = network_master_config.get('target_stations', [])
-        config['network']['target_ips'] = [
-            f"pi-controller-{s}.local" for s in target_stations
-        ]
-        # Apply keyboard settings from master config
-        if network_master_config.get('keyboard', {}).get('enabled'):
-            config['keyboard'] = network_master_config['keyboard']
-
-        logger.info("Network master mode: ENABLED (this Pi controls others)")
-    else:
-        config['network']['is_sender'] = False
-        logger.info("Network master mode: DISABLED (listening for commands)")
+    # Check if this is the master station (Pi-02)
+    is_master = (station_id == "02")
 
     logger.info("=" * 70)
     logger.info(f"Oriental Motor CVD Controller - {config.get('station_name', f'Station {station_id}')}")
+    if is_master:
+        logger.info("*** MASTER STATION - Keyboard Control Enabled ***")
     logger.info("=" * 70)
 
     # Setup signal handlers
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-
     # ========================================================================
-    # Initialize Network Sync
-    # ========================================================================
-    logger.info("\n[1/4] Initializing network sync...")
-    network_sync = NetworkSync(config)
-    network_sync.start_listener()
-
-    # ========================================================================
-    # Initialize Motor Controller (if motors configured)
+    # Initialize Controller (motor or video-only)
     # ========================================================================
     if config.get('motors') and len(config['motors']) > 0:
-        logger.info("\n[2/4] Initializing motor controller...")
-
-        motor_controller = MotorController(
-            config=config,
-            on_ready=None,  # Will be set by sequence_manager
-            on_finished=None,
-            on_error=None
-        )
+        from services.motor_controller import MotorController
+        logger.info("\n[1/3] Initializing motor controller...")
+        motor_controller = MotorController(config=config)
     else:
-        logger.info("\n[2/4] No motors configured - skipping motor controller")
-        motor_controller = None
+        logger.info("\n[1/3] No motors - using video-only controller")
+        motor_controller = VideoOnlyController(config=config)
 
     # ========================================================================
-    # Initialize Sequence Manager
+    # Initialize OSC Listener (all stations receive commands)
+    # For Pi-02 (master), sequence_manager handles OSC instead
     # ========================================================================
-    logger.info("\n[3/4] Initializing sequence manager...")
-
-    sequence_manager = SequenceManager(
-        motor_controller=motor_controller,
-        network_sync=network_sync,
-        config=config
-    )
-
-    # Wire motor callbacks to sequence manager (if motor exists)
-    if motor_controller:
-        motor_controller._on_ready = sequence_manager.on_motor_ready
-        motor_controller._on_finished = sequence_manager.on_motor_finished
-        motor_controller._on_error = sequence_manager.on_motor_error
-        motor_controller._on_return_to_zero_complete = sequence_manager.on_return_to_zero_complete
-
-    # Wire network callbacks to sequence manager
-    # Note: OSC callbacks run in separate thread, need to schedule in main loop
-    def on_network_start_wrapper():
-        asyncio.run_coroutine_threadsafe(sequence_manager.on_network_start(), loop)
-
-    def on_network_reset_wrapper():
-        asyncio.run_coroutine_threadsafe(sequence_manager.on_network_reset(), loop)
-
-    network_sync.set_on_start(on_network_start_wrapper)
-    network_sync.set_on_stop(sequence_manager.on_network_stop)
-    network_sync.set_on_reset(on_network_reset_wrapper)
-    network_sync.set_on_clear_alarm(sequence_manager.on_clear_alarm_pressed)
+    if is_master:
+        logger.info("\n[2/3] Skipping OSC listener (master uses sequence_manager)")
+        osc_server = None
+    else:
+        logger.info("\n[2/3] Initializing OSC listener...")
+        osc_server = setup_osc_listener(config, motor_controller)
 
     # ========================================================================
-    # Initialize Keyboard Handler (if enabled in config)
+    # Initialize Master Components (Pi-02 only)
     # ========================================================================
-    if config.get('keyboard', {}).get('enabled'):
-        keyboard_type = config.get('keyboard', {}).get('type', 'usb')
-        logger.info(f"\n[4/4] Initializing keyboard ({keyboard_type})...")
+    if is_master:
+        logger.info("\n[3/3] Initializing master components (keyboard + sequence manager)...")
 
+        # Import master-only components
+        from key import KeyboardController
+        from services.sequence_manager import SequenceManager
+
+        # Create sequence manager (handles both sending commands AND receiving status)
+        sequence_manager = SequenceManager(config=config)
+        sequence_manager.set_local_motor_controller(motor_controller)
+        sequence_manager.start_server()
+
+        # Create keyboard controller
         try:
-            keyboard_handler = KeyboardHandler(config)
-
-            # Wire keyboard to sequence manager
-            # Note: Keyboard callbacks run in separate thread, need to schedule in main loop
-
-            # Start is async, so schedule it in the main event loop
-            def on_start_wrapper():
-                asyncio.run_coroutine_threadsafe(sequence_manager.on_start_pressed(), loop)
-
-            keyboard_handler.set_on_start(on_start_wrapper)
-            keyboard_handler.set_on_stop(sequence_manager.on_stop_pressed)
-            keyboard_handler.set_on_clear_alarm(sequence_manager.on_clear_alarm_pressed)
-
-            # Reset is async, so schedule it in the main event loop
-            def on_reset_wrapper():
-                asyncio.run_coroutine_threadsafe(sequence_manager.on_reset_pressed(), loop)
-
-            keyboard_handler.set_on_reset(on_reset_wrapper)
-
-            # Wire state check so V key knows if system is running
-            keyboard_handler.set_get_is_running(sequence_manager.is_running)
-
-            logger.info("✓ USB keyboard handler initialized")
-
+            keyboard_controller = KeyboardController()
+            keyboard_controller.set_on_start(sequence_manager.on_start_pressed)
+            keyboard_controller.set_on_stop(sequence_manager.on_stop_pressed)
+            keyboard_controller.set_on_reset(sequence_manager.on_reset_pressed)
+            keyboard_controller.set_get_is_running(sequence_manager.get_is_running)
+            keyboard_controller.start()
+            logger.info("  Keyboard controller initialized")
         except Exception as e:
-            logger.warning(f"Keyboard not available: {e}")
-            keyboard_handler = None
+            logger.warning(f"  Keyboard not available: {e}")
+            keyboard_controller = None
+
     else:
-        logger.info("\n[4/4] Keyboard not enabled in config - skipping")
-        keyboard_handler = None
+        logger.info("\n[3/3] Not master - skipping keyboard/sequence manager")
 
     # ========================================================================
-    # System Boot - Auto Homing (only if motors exist)
+    # System Boot - Initialize Motors
     # ========================================================================
     if motor_controller:
         logger.info("\n" + "=" * 70)
-        logger.info("SYSTEM BOOT - Starting Initialization")
+        logger.info("SYSTEM BOOT - Initializing Motors")
         logger.info("=" * 70)
 
-        await sequence_manager.initialize()
+        await motor_controller.initialize()
     else:
         logger.info("\n" + "=" * 70)
-        logger.info("SYSTEM BOOT (No motors) - Auto starting video")
+        logger.info("SYSTEM BOOT (No motors)")
         logger.info("=" * 70)
-
-        # For video-only stations, auto-start video playback
-        await sequence_manager.initialize_video_only()
 
     # ========================================================================
     # Main Loop
@@ -315,13 +382,13 @@ async def main():
     logger.info("System Ready - Waiting for Commands")
     logger.info("=" * 70)
 
-    if keyboard_handler:
-        logger.info("\nUSB Keyboard Controls:")
-        logger.info("  V key   - Toggle start/stop operation")
-        logger.info("  C key   - Enter standby mode (return to home)")
-        logger.info("  Ctrl    - Clear motor alarm")
+    if is_master and keyboard_controller:
+        logger.info("\nKeyboard Controls:")
+        logger.info("  V key    - Toggle start/stop")
+        logger.info("  Ctrl+V   - Reset (stop, home, wait)")
+        logger.info("  Ctrl+C   - Exit")
     else:
-        logger.info("\nListening for OSC commands from master station")
+        logger.info("\nListening for OSC commands from master (Pi-02)")
 
     logger.info("\nPress Ctrl+C to exit")
     logger.info("=" * 70 + "\n")
