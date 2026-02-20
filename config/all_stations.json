@@ -50,7 +50,7 @@
       "motors": [
         {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"},
         {"name": "motor_2", "slave_id": 2, "type": "CVD-28-KR"},
-        {"name": "motor_3", "slave_id": 2, "type": "CVD-28-KR"}
+        {"name": "motor_3", "slave_id": 3, "type": "CVD-28-KR"}
       ],
       "homing_required": false,
       "return_to_zero_on_stop": false
