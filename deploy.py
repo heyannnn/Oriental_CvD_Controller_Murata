@@ -36,6 +36,14 @@ FILES_PI02_ONLY = [
     ("services/sequence_manager.py", "services/sequence_manager.py"),
 ]
 
+# Additional files for Pi-07 and Pi-10 (LED stations)
+FILES_LED_STATIONS = [
+    ("services/led_controller.py", "services/led_controller.py"),
+]
+
+# Files to keep in services folder for LED stations
+KEEP_SERVICES_LED = ["motor_controller.py", "motor_driver.py", "mp4_player.py", "led_controller.py"]
+
 # Files to keep in root folder
 KEEP_ROOT_ALL = ["main.py"]
 KEEP_ROOT_PI02 = ["main.py", "key.py"]
@@ -104,6 +112,8 @@ def deploy_files():
         files = FILES_ALL.copy()
         if pi == "02":
             files += FILES_PI02_ONLY
+        if pi in ["07", "10"]:
+            files += FILES_LED_STATIONS
 
         # Deploy files
         success = True
@@ -124,6 +134,9 @@ def deploy_files():
         if pi == "02":
             keep_root = KEEP_ROOT_PI02
             keep_services = KEEP_SERVICES_PI02
+        elif pi in ["07", "10"]:
+            keep_root = KEEP_ROOT_ALL
+            keep_services = KEEP_SERVICES_LED
         else:
             keep_root = KEEP_ROOT_ALL
             keep_services = KEEP_SERVICES_ALL

@@ -90,7 +90,11 @@
       ],
       "homing_required": true,
       "return_to_zero_on_stop": true,
-      "video_sync_delay_sec": 1.50
+      "video_sync_delay_sec": 1.50,
+      "led": {
+        "enabled": true,
+        "num_pixels": 2
+      }
     },
 
     "08": {
@@ -129,7 +133,11 @@
         {"name": "motor_1", "slave_id": 1, "type": "CVD-28-KR"}
       ],
       "homing_required": false,
-      "return_to_zero_on_stop": false
+      "return_to_zero_on_stop": false,
+      "led": {
+        "enabled": true,
+        "num_pixels": 2
+      }
     },
 
     "11": {

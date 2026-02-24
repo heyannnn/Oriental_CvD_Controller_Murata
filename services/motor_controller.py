@@ -2,7 +2,7 @@
 Motor Controller - State machine for motor operations
 Manages homing, ready state, and operation execution per station
 Supports multiple motors per station (chained on same RS485 bus)
-Controls video player and sends status to master (Pi-02)
+Controls video player, LED animations, and sends status to master (Pi-02)
 """
 
 import logging
@@ -12,11 +12,19 @@ from enum import Enum
 from services.motor_driver import MotorDriver
 from services.mp4_player import MP4Player
 
+# LED controller - optional, only for stations 07 and 10
+try:
+    from services.led_controller import LEDController
+    LED_AVAILABLE = True
+except ImportError:
+    LED_AVAILABLE = False
+
 try:
     from pythonosc import udp_client
     OSC_AVAILABLE = True
 except ImportError:
     OSC_AVAILABLE = False
+
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +99,19 @@ class MotorController:
 
         # Video player control
         self.mp4_player = MP4Player(config)
+
+        # LED controller (stations 07 and 10 only)
+        self.led_controller = None
+        led_config = config.get('led', {})
+        if led_config.get('enabled', False) and self.station_id in ["07", "10"] and LED_AVAILABLE:
+            try:
+                self.led_controller = LEDController(
+                    station_id=self.station_id,
+                    video_sync_delay_sec=self.video_sync_delay_sec
+                )
+                logger.info(f"LED controller initialized for station {self.station_id}")
+            except Exception as e:
+                logger.error(f"Failed to initialize LED controller: {e}")
 
         # OSC client for sending status to master (Pi-02)
         self.master_ip = config.get('network', {}).get('master_ip', 'pi-controller-02.local')
@@ -257,6 +278,10 @@ class MotorController:
         self.is_looping = True
         self.cycle_count = 1
 
+        # Start LED animation
+        if self.led_controller:
+            self.led_controller.on_start()
+
         # Send video command
         self.mp4_player.send_command("start")
 
@@ -274,6 +299,11 @@ class MotorController:
         """Handle /stop OSC command"""
         logger.info("=== STOP RECEIVED ===")
         self.is_looping = False
+
+        # Stop LED animation
+        if self.led_controller:
+            self.led_controller.on_stop()
+
         self.stop()
         self.mp4_player.send_command("stop")
 
@@ -281,6 +311,10 @@ class MotorController:
         """Handle /reset OSC command - stop, clear alarm, home, wait"""
         logger.info("=== RESET RECEIVED ===")
         self.is_looping = False
+
+        # Stop LED animation
+        if self.led_controller:
+            self.led_controller.on_stop()
 
         # Cancel any monitoring
         if self._monitor_task:
@@ -433,6 +467,10 @@ class MotorController:
         self.cycle_count += 1
         logger.info(f"=== Starting cycle {self.cycle_count} ===")
 
+        # Start LED animation for this cycle (skip sync delay on loop cycles)
+        if self.led_controller:
+            self.led_controller.on_start(skip_sync_delay=True)
+
         self.mp4_player.send_command("standby")
         self.start_operation(op_no=0)
 
@@ -574,6 +612,10 @@ class MotorController:
                 self._monitor_task.cancel()
             except:
                 pass
+
+        # Close LED controller
+        if self.led_controller:
+            self.led_controller.close()
 
         for i, driver in enumerate(self.drivers):
             driver.close()
