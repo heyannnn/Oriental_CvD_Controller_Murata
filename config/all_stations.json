@@ -146,7 +146,9 @@
       "osc_port": 10000,
       "motors": [],
       "homing_required": false,
-      "return_to_zero_on_stop": false
+      "return_to_zero_on_stop": false,
+      "video_only": true,
+      "sync_video_duration_sec": 30.0
     }
   }
 }

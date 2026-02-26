@@ -38,7 +38,7 @@ STATION_CONFIG = {
     "10": {
         "num_pixels": 2,
         "red": (0, 255, 0),  # Different color mapping for station 10
-        "blue": (0, 0, 255),
+        "blue": (255, 0, 255),
     },
 }
 

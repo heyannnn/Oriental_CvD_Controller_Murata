@@ -161,7 +161,11 @@ def shutdown(signum, frame):
 # ============================================================================
 
 class VideoOnlyController:
-    """Simple controller for video-only stations - just sends status back to master"""
+    """Simple controller for video-only stations (station 11)
+
+    on_start: sends NormalOperation.csv (video player will loop it)
+    on_stop/on_reset: sends Waiting.csv
+    """
 
     def __init__(self, config):
         self.config = config
@@ -197,19 +201,19 @@ class VideoOnlyController:
     def on_start(self):
         logger.info("=== START RECEIVED (video only) ===")
         self.state = "running"
-        self.mp4_player.send_command("start")
+        self.mp4_player.send_command("start")  # Plays NormalOperation.csv (looped by video player)
         self._send_status()
 
     def on_stop(self):
         logger.info("=== STOP RECEIVED (video only) ===")
         self.state = "home_end"
-        self.mp4_player.send_command("stop")
+        self.mp4_player.send_command("stop")  # Plays Waiting.csv
         self._send_status()
 
     def on_reset(self):
         logger.info("=== RESET RECEIVED (video only) ===")
         self.state = "home_end"
-        self.mp4_player.send_command("stop")
+        self.mp4_player.send_command("stop")  # Plays Waiting.csv
         self._send_status()
 
     async def initialize(self):

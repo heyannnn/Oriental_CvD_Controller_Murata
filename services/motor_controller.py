@@ -79,6 +79,10 @@ class MotorController:
         self.loop_delay_sec = config.get('loop_delay_sec', 0.0)
         self.video_sync_delay_sec = config.get('video_sync_delay_sec', 1.0)
 
+        # Video-only station (station 11) - no motors, just loop video
+        self.video_only = config.get('video_only', False)
+        self.sync_video_duration_sec = config.get('sync_video_duration_sec', 30.0)
+
         # Create motor drivers - one per motor in config
         serial_config = config.get('serial', {})
         motors_config = config.get('motors', [])
@@ -95,7 +99,10 @@ class MotorController:
             self.drivers.append(driver)
             self.motor_names.append(name)
 
-        logger.info(f"Motor controller configured with {len(self.drivers)} motor(s)")
+        if self.video_only:
+            logger.info("Motor controller configured as VIDEO-ONLY station")
+        else:
+            logger.info(f"Motor controller configured with {len(self.drivers)} motor(s)")
 
         # Video player control
         self.mp4_player = MP4Player(config)
@@ -282,6 +289,13 @@ class MotorController:
         if self.led_controller:
             self.led_controller.on_start()
 
+        # Video-only station: just loop Sync.csv forever
+        if self.video_only:
+            self._set_state(MotorState.RUNNING)
+            if self._event_loop:
+                asyncio.run_coroutine_threadsafe(self._video_only_loop(), self._event_loop)
+            return
+
         # Send video command
         self.mp4_player.send_command("start")
 
@@ -294,6 +308,17 @@ class MotorController:
         logger.info(f"Waiting {self.video_sync_delay_sec}s for video sync...")
         await asyncio.sleep(self.video_sync_delay_sec)
         self.start_operation(op_no=0)
+
+    async def _video_only_loop(self):
+        """Video-only station loop: send standby command every 30s to loop Sync.csv"""
+        while self.is_looping:
+            logger.info(f"Video-only: Sending standby (Sync.csv) - cycle {self.cycle_count}")
+            self.mp4_player.send_command("standby")
+            self.cycle_count += 1
+            await asyncio.sleep(self.sync_video_duration_sec)
+
+        logger.info("Video-only loop stopped")
+        self._set_state(MotorState.HOME_END)
 
     def on_stop(self):
         """Handle /stop OSC command"""

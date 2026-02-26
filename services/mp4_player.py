@@ -40,6 +40,7 @@ class MP4Player:
 
         # Station config for video behavior
         self.homing_required = config.get('homing_required', True)
+        self.video_only = config.get('video_only', False)
 
         # Create OSC client
         try:
@@ -65,9 +66,14 @@ class MP4Player:
             - "standby" -> Sync.csv (loop cycles)
             - "stop" -> Waiting.csv
 
-          Stations WITHOUT homing (2,3,4,10,11):
+          Stations WITHOUT homing (2,3,4,10):
             - "start" -> NormalOperation.csv (first cycle)
             - "standby" -> NormalOperation.csv (loop cycles)
+            - "stop" -> Waiting.csv
+
+          Video-only station (11):
+            - "start" -> NormalOperation.csv (first cycle)
+            - "standby" -> Sync.csv (loop cycles, 30s each)
             - "stop" -> Waiting.csv
         """
         if not self.client:
@@ -87,8 +93,21 @@ class MP4Player:
                     logger.info("Video: /playlist/load [Waiting.csv] (stopped)")
                 else:
                     logger.debug(f"Video command '{command}' - no action defined")
+            elif self.video_only:
+                # Station 11 - video only, loop Sync.csv after NormalOperation
+                if command == "start":
+                    self.client.send_message("/playlist/load", ["./NormalOperation.csv"])
+                    logger.info("Video: /playlist/load [NormalOperation.csv] (first cycle)")
+                elif command == "standby":
+                    self.client.send_message("/playlist/load", ["./Sync.csv"])
+                    logger.info("Video: /playlist/load [Sync.csv] (loop cycle)")
+                elif command == "stop":
+                    self.client.send_message("/playlist/load", ["./Waiting.csv"])
+                    logger.info("Video: /playlist/load [Waiting.csv] (stopped)")
+                else:
+                    logger.debug(f"Video command '{command}' - no action defined")
             else:
-                # Stations 2,3,4,10,11 - no homing, use 2 videos only
+                # Stations 2,3,4,10 - no homing, use 2 videos only
                 if command == "start":
                     self.client.send_message("/playlist/load", ["./NormalOperation.csv"])
                     logger.info("Video: /playlist/load [NormalOperation.csv] (first cycle)")

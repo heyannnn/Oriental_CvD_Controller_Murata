@@ -14,6 +14,7 @@ Uses evdev to read directly from USB keyboard (works without terminal).
 
 import logging
 import threading
+import time
 
 try:
     import evdev
@@ -21,6 +22,10 @@ try:
     EVDEV_AVAILABLE = True
 except ImportError:
     EVDEV_AVAILABLE = False
+
+# Retry settings for keyboard reconnection
+KEYBOARD_RETRY_DELAY = 2.0  # seconds between reconnection attempts
+KEYBOARD_MAX_RETRIES = 0    # 0 = infinite retries
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,7 @@ class KeyboardController:
     USB keyboard handler for master control station.
     Keys: V (start/stop toggle), Ctrl+V (reset)
     Uses evdev for direct keyboard access (works in background/systemd).
+    Automatically reconnects if keyboard disconnects.
     """
 
     def __init__(self):
@@ -53,7 +59,7 @@ class KeyboardController:
 
         self._device = find_keyboard()
         if not self._device:
-            raise RuntimeError("No keyboard found. Make sure user is in 'input' group: sudo usermod -aG input $USER")
+            logger.warning("No keyboard found at startup - will retry when listener starts")
 
         # Callbacks (set by sequence_manager or main.py)
         self._on_start = None
@@ -68,7 +74,8 @@ class KeyboardController:
         self._running = True
         self._thread = None
 
-        logger.info(f"Keyboard controller initialized using: {self._device.name}")
+        if self._device:
+            logger.info(f"Keyboard controller initialized using: {self._device.name}")
         logger.info("Controls: V=toggle start/stop, Ctrl+V=reset")
 
     def set_on_start(self, callback):
@@ -93,48 +100,83 @@ class KeyboardController:
         self._thread.start()
         logger.info("Keyboard listener started")
 
+    def _reconnect_keyboard(self):
+        """Try to reconnect to keyboard device."""
+        retry_count = 0
+        while self._running:
+            retry_count += 1
+            if KEYBOARD_MAX_RETRIES > 0 and retry_count > KEYBOARD_MAX_RETRIES:
+                logger.error(f"Keyboard reconnection failed after {KEYBOARD_MAX_RETRIES} attempts")
+                return False
+
+            logger.info(f"Attempting to reconnect keyboard (attempt {retry_count})...")
+            self._device = find_keyboard()
+            if self._device:
+                logger.info(f"Keyboard reconnected: {self._device.name}")
+                self._ctrl_pressed = False  # Reset modifier state
+                return True
+
+            time.sleep(KEYBOARD_RETRY_DELAY)
+
+        return False
+
     def _keyboard_loop(self):
-        """Background thread that reads keyboard input via evdev"""
-        try:
-            for event in self._device.read_loop():
-                if not self._running:
+        """Background thread that reads keyboard input via evdev with auto-reconnect"""
+        while self._running:
+            # Ensure we have a device
+            if not self._device:
+                if not self._reconnect_keyboard():
                     break
+                continue
 
-                if event.type != ecodes.EV_KEY:
-                    continue
+            try:
+                for event in self._device.read_loop():
+                    if not self._running:
+                        return
 
-                # Track Ctrl key state
-                if event.code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
-                    self._ctrl_pressed = (event.value == 1)  # 1 = pressed, 0 = released
-                    continue
+                    if event.type != ecodes.EV_KEY:
+                        continue
 
-                # Only handle key press (value=1), not release (value=0) or repeat (value=2)
-                if event.value != 1:
-                    continue
+                    # Track Ctrl key state
+                    if event.code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
+                        self._ctrl_pressed = (event.value == 1)  # 1 = pressed, 0 = released
+                        continue
 
-                # V key
-                if event.code == ecodes.KEY_V:
-                    if self._ctrl_pressed:
-                        # Ctrl+V - Reset
-                        logger.info("Ctrl+V pressed: RESET")
-                        if self._on_reset:
-                            self._on_reset()
-                    else:
-                        # V only - Toggle start/stop
-                        is_running = self._get_is_running() if self._get_is_running else False
+                    # Only handle key press (value=1), not release (value=0) or repeat (value=2)
+                    if event.value != 1:
+                        continue
 
-                        if is_running:
-                            logger.info("V key pressed: STOP")
-                            if self._on_stop:
-                                self._on_stop()
+                    # V key
+                    if event.code == ecodes.KEY_V:
+                        if self._ctrl_pressed:
+                            # Ctrl+V - Reset
+                            logger.info("Ctrl+V pressed: RESET")
+                            if self._on_reset:
+                                self._on_reset()
                         else:
-                            logger.info("V key pressed: START")
-                            if self._on_start:
-                                self._on_start()
+                            # V only - Toggle start/stop
+                            is_running = self._get_is_running() if self._get_is_running else False
 
-        except Exception as e:
-            if self._running:
-                logger.error(f"Keyboard read error: {e}")
+                            if is_running:
+                                logger.info("V key pressed: STOP")
+                                if self._on_stop:
+                                    self._on_stop()
+                            else:
+                                logger.info("V key pressed: START")
+                                if self._on_start:
+                                    self._on_start()
+
+            except OSError as e:
+                # Device disconnected (errno 19 = ENODEV)
+                if self._running:
+                    logger.warning(f"Keyboard disconnected: {e}")
+                    self._device = None
+                    # Will reconnect on next loop iteration
+            except Exception as e:
+                if self._running:
+                    logger.error(f"Keyboard read error: {e}")
+                    self._device = None
+                    time.sleep(KEYBOARD_RETRY_DELAY)
 
     def stop(self):
         """Stop keyboard listener"""
