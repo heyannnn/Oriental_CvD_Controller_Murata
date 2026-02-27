@@ -7,6 +7,7 @@ Coordinates system-wide operations.
 import logging
 import threading
 import json
+import time
 
 try:
     from pythonosc import udp_client
@@ -47,6 +48,8 @@ class SequenceManager:
         self.is_running = False
         self.is_resetting = False
         self.is_booting = True  # True until all stations HOME_END after boot
+        self.boot_start_time = None  # Track boot start time for timeout
+        self.boot_timeout_sec = 60.0  # Timeout for boot - start anyway after this
 
         # OSC clients for sending to stations
         self.osc_clients = {}
@@ -179,6 +182,8 @@ class SequenceManager:
         self.is_running = False
         self.is_resetting = True
         self._send_to_all("/reset")
+        # Start LED homing indicator on station 07
+        self._send_led_homing()
 
     def get_is_running(self):
         """Check if system is running (for V key toggle)"""
@@ -196,6 +201,23 @@ class SequenceManager:
                 logger.info(f"  Sent {command} to station {station_id}")
             except Exception as e:
                 logger.error(f"  Failed to send {command} to station {station_id}: {e}")
+
+    def _send_to_station(self, station_id, command):
+        """Send OSC command to a specific station"""
+        if station_id in self.osc_clients:
+            try:
+                self.osc_clients[station_id].send_message(command, [])
+                logger.info(f"  Sent {command} to station {station_id}")
+            except Exception as e:
+                logger.error(f"  Failed to send {command} to station {station_id}: {e}")
+
+    def _send_led_homing(self):
+        """Tell LED 07 to show homing indicator (blinking BLUE)"""
+        self._send_to_station("07", "/led/homing")
+
+    def _send_led_ready(self):
+        """Tell LED 07 to show ready indicator (solid GREEN)"""
+        self._send_to_station("07", "/led/ready")
 
     # ========================================================================
     # OSC Receive (Status from stations)
@@ -224,9 +246,18 @@ class SequenceManager:
                 logger.info("All stations HOME_END - Reset complete, waiting for V")
                 logger.info("=" * 70)
                 self.is_resetting = False
+                # Show LED ready indicator (solid GREEN)
+                self._send_led_ready()
 
         # Check if all stations homed (after boot) - auto-start
         if self.is_booting:
+            # Start boot timer and LED homing indicator when first status received
+            if self.boot_start_time is None:
+                self.boot_start_time = time.time()
+                logger.info(f"Boot timer started ({self.boot_timeout_sec}s timeout)")
+                # Start LED homing indicator on station 07
+                self._send_led_homing()
+
             if self._check_all_stations_homed():
                 logger.info("=" * 70)
                 logger.info("All stations HOME_END - Boot complete, AUTO-STARTING")
@@ -234,6 +265,18 @@ class SequenceManager:
                 self.is_booting = False
                 self.is_running = True
                 self._send_to_all("/start")
+            else:
+                # Check boot timeout
+                elapsed = time.time() - self.boot_start_time
+                if elapsed >= self.boot_timeout_sec:
+                    not_ready = [sid for sid, s in self.station_states.items() if s != "home_end"]
+                    logger.warning("=" * 70)
+                    logger.warning(f"Boot TIMEOUT ({self.boot_timeout_sec}s) - Starting anyway!")
+                    logger.warning(f"Stations not ready: {not_ready}")
+                    logger.warning("=" * 70)
+                    self.is_booting = False
+                    self.is_running = True
+                    self._send_to_all("/start")
 
     def _log_status_summary(self):
         """Log a summary of all station states grouped by state"""

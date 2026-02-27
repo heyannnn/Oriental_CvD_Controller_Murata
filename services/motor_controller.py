@@ -132,7 +132,9 @@ class MotorController:
 
         self.current_operation = None
         self._monitor_task = None
+        self._delayed_start_task = None
         self._event_loop = None
+        self._abort_flag = False  # Set to True to abort running operations
 
     def _set_state(self, new_state):
         """Set state and notify callbacks"""
@@ -152,13 +154,17 @@ class MotorController:
 
     def _send_status(self):
         """Send current state to master (Pi-02) via OSC"""
+        self._send_status_value(self.state.value)
+
+    def _send_status_value(self, status_value):
+        """Send specific status value to master (Pi-02) via OSC"""
         if not self.status_client:
             return
 
         try:
             # /status [station_id] [state]
-            self.status_client.send_message("/status", [self.station_id, self.state.value])
-            logger.debug(f"Sent status: /status {self.station_id} {self.state.value}")
+            self.status_client.send_message("/status", [self.station_id, status_value])
+            logger.debug(f"Sent status: /status {self.station_id} {status_value}")
         except Exception as e:
             logger.warning(f"Failed to send status: {e}")
 
@@ -173,9 +179,12 @@ class MotorController:
         """
         self._event_loop = asyncio.get_running_loop()
 
-        # Wait 3 seconds on boot to let all stations power up and master to start listening
-        logger.info("Waiting 3 seconds for all stations to boot...")
-        await asyncio.sleep(3.0)
+        # Send "booting" status immediately so master knows we exist
+        self._send_status_value("booting")
+
+        # Wait 15 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 15 seconds for all stations to boot...")
+        await asyncio.sleep(15.0)
 
         logger.info("=" * 70)
         logger.info(f"Initializing motor controller ({len(self.drivers)} motor(s))...")
@@ -287,6 +296,7 @@ class MotorController:
 
         logger.info("=== START RECEIVED ===")
         self.is_looping = True
+        self._abort_flag = False  # Clear abort flag on new start
         self.cycle_count = 1
 
         # Start LED animation
@@ -305,12 +315,15 @@ class MotorController:
 
         # Wait for video sync delay, then start operation
         if self._event_loop:
-            asyncio.run_coroutine_threadsafe(self._delayed_start(), self._event_loop)
+            self._delayed_start_task = asyncio.run_coroutine_threadsafe(self._delayed_start(), self._event_loop)
 
     async def _delayed_start(self):
         """Wait for video sync delay, then start operation"""
         logger.info(f"Waiting {self.video_sync_delay_sec}s for video sync...")
         await asyncio.sleep(self.video_sync_delay_sec)
+        if self._abort_flag:
+            logger.info("Delayed start aborted")
+            return
         self.start_operation(op_no=0)
 
     async def _video_only_loop(self):
@@ -328,6 +341,14 @@ class MotorController:
         """Handle /stop OSC command"""
         logger.info("=== STOP RECEIVED ===")
         self.is_looping = False
+        self._abort_flag = True  # Signal running operations to abort
+
+        # Cancel any pending delayed start
+        if self._delayed_start_task:
+            try:
+                self._delayed_start_task.cancel()
+            except:
+                pass
 
         # Stop LED animation
         if self.led_controller:
@@ -340,15 +361,21 @@ class MotorController:
         """Handle /reset OSC command - stop, clear alarm, home, wait"""
         logger.info("=== RESET RECEIVED ===")
         self.is_looping = False
+        self._abort_flag = True  # Signal running operations to abort
 
         # Stop LED animation
         if self.led_controller:
             self.led_controller.on_stop()
 
-        # Cancel any monitoring
+        # Cancel any pending tasks
         if self._monitor_task:
             try:
                 self._monitor_task.cancel()
+            except:
+                pass
+        if self._delayed_start_task:
+            try:
+                self._delayed_start_task.cancel()
             except:
                 pass
 
@@ -426,6 +453,11 @@ class MotorController:
         last_log_time = 0
 
         while True:
+            # Check abort flag
+            if self._abort_flag:
+                logger.info("Monitor operation aborted")
+                return
+
             elapsed = time.time() - start_time
 
             # Check for alarm

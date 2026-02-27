@@ -63,6 +63,9 @@ class LEDController:
         self.pixels = None
         self._running = False
         self._thread = None
+        self._indicator_running = False
+        self._indicator_thread = None
+        self.GREEN = (0, 255, 0)
 
         if not NEOPIXEL_AVAILABLE:
             logger.warning("NeoPixel not available - LED disabled")
@@ -116,6 +119,11 @@ class LEDController:
             logger.warning("Cannot start LED - pixels not initialized")
             return
 
+        # Stop any indicator and turn off LED immediately
+        self._indicator_running = False
+        time.sleep(0.1)
+        self.all_off()
+
         self._running = True
         self._skip_sync_delay = skip_sync_delay
 
@@ -133,6 +141,7 @@ class LEDController:
     def on_stop(self):
         """Stop LED animation and turn off."""
         self._running = False
+        self._indicator_running = False
         time.sleep(0.2)  # Give thread time to exit
         self.all_off()
         logger.info("LED stopped")
@@ -141,12 +150,67 @@ class LEDController:
         """Reset LED (same as stop)."""
         self.on_stop()
 
+    # ========================================================================
+    # Homing Indicator (Station 07 only)
+    # ========================================================================
+
+    def start_homing_indicator(self):
+        """Start blinking BLUE to indicate stations are homing."""
+        if not self.pixels:
+            logger.warning("Cannot start homing indicator - pixels not initialized")
+            return
+
+        # Stop any existing animation
+        self._running = False
+        self._indicator_running = False
+        time.sleep(0.2)
+
+        self._indicator_running = True
+        self._indicator_thread = threading.Thread(target=self._homing_blink, daemon=True)
+        self._indicator_thread.start()
+        logger.info("LED homing indicator started (blinking BLUE)")
+
+    def _homing_blink(self):
+        """Blink BLUE while homing."""
+        while self._indicator_running:
+            self.all_on(self.BLUE)
+            for _ in range(5):  # 0.5s on
+                if not self._indicator_running:
+                    self.all_off()
+                    return
+                time.sleep(0.1)
+            self.all_off()
+            for _ in range(5):  # 0.5s off
+                if not self._indicator_running:
+                    return
+                time.sleep(0.1)
+
+    def show_ready(self):
+        """Show solid GREEN to indicate all stations ready."""
+        if not self.pixels:
+            return
+
+        # Stop blinking
+        self._indicator_running = False
+        time.sleep(0.2)
+
+        self.all_on(self.GREEN)
+        logger.info("LED showing READY (solid GREEN)")
+
+    def stop_indicator(self):
+        """Stop the homing indicator (called before starting normal animation)."""
+        self._indicator_running = False
+        time.sleep(0.2)
+        self.all_off()
+        logger.info("LED indicator stopped")
+
     def _animation_07(self):
         """
         Station 07 animation (single cycle, follows motor loop):
         - Wait video_sync_delay_sec (sync with motor) - only on first cycle
-        - Delay 1.5s
-        - RED for 11s
+        - 1.5s - 6s: Fade in (brightness 0 to max)
+        - 6s - 12.5s: Full brightness
+        - 12.5s - 15s: Fade out (brightness max to 0)
         - OFF (stays off until motor loops and calls on_start again)
         """
         # Wait for video sync delay first (only on first cycle)
@@ -160,18 +224,45 @@ class LEDController:
         else:
             logger.info(f"Station 07: Starting LED animation ({self.num_pixels} pixels), no sync delay (loop cycle)")
 
-        # Delay 1.5s
-        for _ in range(15):  # 1.5s in 0.1s chunks
+        # Delay 1.5s (off)
+        for _ in range(25):  # 1.5s in 0.1s chunks
             if not self._running:
                 return
             time.sleep(0.1)
 
-        # RED for 11s
-        self.all_on(self.RED)
-        for _ in range(110):  # 11s in 0.1s chunks
+        # Fade in: 1.5s - 6s (4.5 seconds)
+        fade_in_duration = 4.5
+        fade_steps = 90  # 0.1s per step
+        base_r, base_g, base_b = self.RED
+        logger.info("Station 07: Fade in starting")
+        for step in range(fade_steps):
             if not self._running:
                 self.all_off()
                 return
+            brightness = (step + 1) / fade_steps
+            color = (int(base_r * brightness), int(base_g * brightness), int(base_b * brightness))
+            self.all_on(color)
+            time.sleep(0.1)
+
+        # Full brightness: 6s - 12.5s (6.5 seconds)
+        self.all_on(self.RED)
+        for _ in range(65):  # 6.5s in 0.1s chunks
+            if not self._running:
+                self.all_off()
+                return
+            time.sleep(0.1)
+
+        # Fade out: 12.5s - 15s (2.5 seconds)
+        fade_out_duration = 1.5
+        fade_steps = 15  # 0.1s per step
+        logger.info("Station 07: Fade out starting")
+        for step in range(fade_steps):
+            if not self._running:
+                self.all_off()
+                return
+            brightness = 1.0 - ((step + 1) / fade_steps)
+            color = (int(base_r * brightness), int(base_g * brightness), int(base_b * brightness))
+            self.all_on(color)
             time.sleep(0.1)
 
         # OFF - stays off until next on_start() call

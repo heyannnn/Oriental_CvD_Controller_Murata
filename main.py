@@ -218,10 +218,22 @@ class VideoOnlyController:
 
     async def initialize(self):
         """Wait for boot sync, then send initial status to master"""
-        # Wait 3 seconds on boot to let all stations power up and master to start listening
-        logger.info("Waiting 3 seconds for all stations to boot...")
-        await asyncio.sleep(3.0)
+        # Send "booting" status immediately so master knows we exist
+        self._send_status_value("booting")
+
+        # Wait 15 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 15 seconds for all stations to boot...")
+        await asyncio.sleep(15.0)
         self._send_status()
+
+    def _send_status_value(self, status_value):
+        """Send specific status value to master"""
+        if self.status_client:
+            try:
+                self.status_client.send_message("/status", [self.station_id, status_value])
+                logger.debug(f"Sent status: {status_value}")
+            except Exception as e:
+                logger.warning(f"Failed to send status: {e}")
 
     def stop(self):
         pass
@@ -234,7 +246,7 @@ class VideoOnlyController:
 # OSC Listener for receiving commands
 # ============================================================================
 
-def setup_osc_listener(config, controller):
+def setup_osc_listener(config, controller, led_controller=None):
     """Setup OSC listener for receiving /start, /stop, /reset commands"""
     try:
         from pythonosc.dispatcher import Dispatcher
@@ -266,6 +278,19 @@ def setup_osc_listener(config, controller):
     dispatcher.map("/start", handle_start)
     dispatcher.map("/stop", handle_stop)
     dispatcher.map("/reset", handle_reset)
+
+    # LED indicator commands (station 07 only)
+    if led_controller:
+        def handle_led_homing(address, *args):
+            logger.info("Received /led/homing via OSC")
+            led_controller.start_homing_indicator()
+
+        def handle_led_ready(address, *args):
+            logger.info("Received /led/ready via OSC")
+            led_controller.show_ready()
+
+        dispatcher.map("/led/homing", handle_led_homing)
+        dispatcher.map("/led/ready", handle_led_ready)
 
     try:
         server = BlockingOSCUDPServer(("0.0.0.0", listen_port), dispatcher)
@@ -313,7 +338,7 @@ async def main():
 
     # Setup signal handlers
     signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ignore Ctrl+C
 
     # ========================================================================
     # Initialize Controller (motor or video-only)
@@ -335,7 +360,11 @@ async def main():
         osc_server = None
     else:
         logger.info("\n[2/3] Initializing OSC listener...")
-        osc_server = setup_osc_listener(config, motor_controller)
+        # Get LED controller for station 07 (for homing indicator)
+        led_controller_for_osc = None
+        if station_id == "07" and hasattr(motor_controller, 'led_controller'):
+            led_controller_for_osc = motor_controller.led_controller
+        osc_server = setup_osc_listener(config, motor_controller, led_controller_for_osc)
 
     # ========================================================================
     # Initialize Master Components (Pi-02 only)
