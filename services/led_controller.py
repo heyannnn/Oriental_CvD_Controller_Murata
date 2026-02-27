@@ -208,9 +208,11 @@ class LEDController:
         """
         Station 07 animation (single cycle, follows motor loop):
         - Wait video_sync_delay_sec (sync with motor) - only on first cycle
+        - 0s - 1.5s: OFF
         - 1.5s - 6s: Fade in (brightness 0 to max)
         - 6s - 12.5s: Full brightness
-        - 12.5s - 15s: Fade out (brightness max to 0)
+        - 12.5s - 14.5s: Fade out (brightness max to 0)
+        - 14.5s - 15s: OFF
         - OFF (stays off until motor loops and calls on_start again)
         """
         # Wait for video sync delay first (only on first cycle)
@@ -224,15 +226,14 @@ class LEDController:
         else:
             logger.info(f"Station 07: Starting LED animation ({self.num_pixels} pixels), no sync delay (loop cycle)")
 
-        # Delay 1.5s (off)
-        for _ in range(25):  # 1.5s in 0.1s chunks
+        # 0s - 1.5s: OFF
+        for _ in range(15):  # 1.5s in 0.1s chunks
             if not self._running:
                 return
             time.sleep(0.1)
 
-        # Fade in: 1.5s - 6s (4.5 seconds)
-        fade_in_duration = 4.5
-        fade_steps = 90  # 0.1s per step
+        # 1.5s - 6s: Fade in (4.5 seconds)
+        fade_steps = 45  # 0.1s per step
         base_r, base_g, base_b = self.RED
         logger.info("Station 07: Fade in starting")
         for step in range(fade_steps):
@@ -244,17 +245,16 @@ class LEDController:
             self.all_on(color)
             time.sleep(0.1)
 
-        # Full brightness: 6s - 12.5s (6.5 seconds)
+        # 6s - 12.5s: Full brightness (7.5 seconds)
         self.all_on(self.RED)
-        for _ in range(65):  # 6.5s in 0.1s chunks
+        for _ in range(65):  # 7.5s in 0.1s chunks
             if not self._running:
                 self.all_off()
                 return
             time.sleep(0.1)
 
-        # Fade out: 12.5s - 15s (2.5 seconds)
-        fade_out_duration = 1.5
-        fade_steps = 15  # 0.1s per step
+        # 12.5s - 14.5s: Fade out (2.5 seconds)
+        fade_steps = 20  # 0.1s per step
         logger.info("Station 07: Fade out starting")
         for step in range(fade_steps):
             if not self._running:
@@ -265,8 +265,12 @@ class LEDController:
             self.all_on(color)
             time.sleep(0.1)
 
-        # OFF - stays off until next on_start() call
+        # 14.5s - 15s: OFF (0.5 seconds)
         self.all_off()
+        for _ in range(5):  # 2s in 0.1s chunks
+            if not self._running:
+                return
+            time.sleep(0.1)
         self._running = False
         logger.info("Station 07: LED cycle complete, waiting for next motor loop")
 

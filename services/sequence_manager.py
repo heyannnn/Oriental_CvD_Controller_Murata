@@ -49,7 +49,11 @@ class SequenceManager:
         self.is_resetting = False
         self.is_booting = True  # True until all stations HOME_END after boot
         self.boot_start_time = None  # Track boot start time for timeout
-        self.boot_timeout_sec = 60.0  # Timeout for boot - start anyway after this
+        self.boot_timeout_sec = 25.0  # Timeout for boot - start anyway after this
+        self._boot_timer_thread = None
+        self.reset_start_time = None  # Track reset start time for timeout
+        self.reset_timeout_sec = 25.0  # Timeout for reset
+        self._reset_timer_thread = None
 
         # OSC clients for sending to stations
         self.osc_clients = {}
@@ -181,9 +185,14 @@ class SequenceManager:
 
         self.is_running = False
         self.is_resetting = True
+        self.reset_start_time = time.time()
         self._send_to_all("/reset")
         # Start LED homing indicator on station 07
         self._send_led_homing()
+        # Start reset timeout checker
+        self._reset_timer_thread = threading.Thread(target=self._reset_timeout_checker, daemon=True)
+        self._reset_timer_thread.start()
+        logger.info(f"Reset timer started ({self.reset_timeout_sec}s timeout)")
 
     def get_is_running(self):
         """Check if system is running (for V key toggle)"""
@@ -219,6 +228,10 @@ class SequenceManager:
         """Tell LED 07 to show ready indicator (solid GREEN)"""
         self._send_to_station("07", "/led/ready")
 
+    def _send_led_off(self):
+        """Tell LED 07 to turn off indicator"""
+        self._send_to_station("07", "/led/off")
+
     # ========================================================================
     # OSC Receive (Status from stations)
     # ========================================================================
@@ -242,12 +255,7 @@ class SequenceManager:
         # Check if all stations homed (after reset)
         if self.is_resetting:
             if self._check_all_stations_homed():
-                logger.info("=" * 70)
-                logger.info("All stations HOME_END - Reset complete, waiting for V")
-                logger.info("=" * 70)
-                self.is_resetting = False
-                # Show LED ready indicator (solid GREEN)
-                self._send_led_ready()
+                self._do_reset_complete()
 
         # Check if all stations homed (after boot) - auto-start
         if self.is_booting:
@@ -257,26 +265,98 @@ class SequenceManager:
                 logger.info(f"Boot timer started ({self.boot_timeout_sec}s timeout)")
                 # Start LED homing indicator on station 07
                 self._send_led_homing()
+                # Start background timer thread
+                self._boot_timer_thread = threading.Thread(target=self._boot_timeout_checker, daemon=True)
+                self._boot_timer_thread.start()
 
             if self._check_all_stations_homed():
-                logger.info("=" * 70)
-                logger.info("All stations HOME_END - Boot complete, AUTO-STARTING")
-                logger.info("=" * 70)
-                self.is_booting = False
-                self.is_running = True
-                self._send_to_all("/start")
-            else:
-                # Check boot timeout
-                elapsed = time.time() - self.boot_start_time
-                if elapsed >= self.boot_timeout_sec:
-                    not_ready = [sid for sid, s in self.station_states.items() if s != "home_end"]
-                    logger.warning("=" * 70)
-                    logger.warning(f"Boot TIMEOUT ({self.boot_timeout_sec}s) - Starting anyway!")
-                    logger.warning(f"Stations not ready: {not_ready}")
-                    logger.warning("=" * 70)
-                    self.is_booting = False
-                    self.is_running = True
-                    self._send_to_all("/start")
+                self._do_boot_complete()
+
+    def _do_boot_complete(self):
+        """Handle boot complete - all stations HOME_END"""
+        if not self.is_booting:
+            return
+        logger.info("=" * 70)
+        logger.info("All stations HOME_END - Boot complete")
+        logger.info("=" * 70)
+        self.is_booting = False
+        # Show green LED for 2 seconds, then start
+        self._send_led_ready()
+        logger.info("Showing GREEN for 2 seconds before auto-start...")
+        # Start in background thread to not block OSC handler
+        threading.Thread(target=self._delayed_auto_start, daemon=True).start()
+
+    def _delayed_auto_start(self):
+        """Wait 2 seconds showing green, then start"""
+        time.sleep(2.0)
+        logger.info("AUTO-STARTING all stations")
+        logger.info("=" * 70)
+        self._send_led_off()
+        self.is_running = True
+        self._send_to_all("/start")
+
+    def _do_boot_timeout(self):
+        """Handle boot timeout - start anyway"""
+        if not self.is_booting:
+            return
+        not_ready = [sid for sid, s in self.station_states.items() if s != "home_end"]
+        logger.warning("=" * 70)
+        logger.warning(f"Boot TIMEOUT ({self.boot_timeout_sec}s) - Starting anyway!")
+        logger.warning(f"Stations not ready: {not_ready}")
+        logger.warning("=" * 70)
+        self.is_booting = False
+        # Show green LED for 2 seconds, then start
+        self._send_led_ready()
+        logger.info("Showing GREEN for 2 seconds before auto-start...")
+        threading.Thread(target=self._delayed_auto_start, daemon=True).start()
+
+    def _boot_timeout_checker(self):
+        """Background thread to check boot timeout"""
+        while self.is_booting:
+            time.sleep(0.5)
+            if self.boot_start_time is None:
+                continue
+            elapsed = time.time() - self.boot_start_time
+            if elapsed >= self.boot_timeout_sec:
+                self._do_boot_timeout()
+                return
+
+    def _do_reset_complete(self):
+        """Handle reset complete - all stations HOME_END"""
+        if not self.is_resetting:
+            return
+        logger.info("=" * 70)
+        logger.info("All stations HOME_END - Reset complete, waiting for V")
+        logger.info("=" * 70)
+        self.is_resetting = False
+        self.reset_start_time = None
+        # Show LED ready indicator (solid GREEN)
+        self._send_led_ready()
+
+    def _do_reset_timeout(self):
+        """Handle reset timeout - allow V key to start anyway"""
+        if not self.is_resetting:
+            return
+        not_ready = [sid for sid, s in self.station_states.items() if s != "home_end"]
+        logger.warning("=" * 70)
+        logger.warning(f"Reset TIMEOUT ({self.reset_timeout_sec}s) - Ready for V key!")
+        logger.warning(f"Stations not ready: {not_ready}")
+        logger.warning("=" * 70)
+        self.is_resetting = False
+        self.reset_start_time = None
+        # Show LED ready indicator (solid GREEN) - V key can now start
+        self._send_led_ready()
+
+    def _reset_timeout_checker(self):
+        """Background thread to check reset timeout"""
+        while self.is_resetting:
+            time.sleep(0.5)
+            if self.reset_start_time is None:
+                continue
+            elapsed = time.time() - self.reset_start_time
+            if elapsed >= self.reset_timeout_sec:
+                self._do_reset_timeout()
+                return
 
     def _log_status_summary(self):
         """Log a summary of all station states grouped by state"""

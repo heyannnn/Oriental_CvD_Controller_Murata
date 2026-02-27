@@ -182,9 +182,9 @@ class MotorController:
         # Send "booting" status immediately so master knows we exist
         self._send_status_value("booting")
 
-        # Wait 15 seconds on boot to let all stations power up and master to start listening
-        logger.info("Waiting 15 seconds for all stations to boot...")
-        await asyncio.sleep(15.0)
+        # Wait 5 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 5 seconds for all stations to boot...")
+        await asyncio.sleep(5.0)
 
         logger.info("=" * 70)
         logger.info(f"Initializing motor controller ({len(self.drivers)} motor(s))...")

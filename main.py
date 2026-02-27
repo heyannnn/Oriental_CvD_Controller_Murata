@@ -221,9 +221,9 @@ class VideoOnlyController:
         # Send "booting" status immediately so master knows we exist
         self._send_status_value("booting")
 
-        # Wait 15 seconds on boot to let all stations power up and master to start listening
-        logger.info("Waiting 15 seconds for all stations to boot...")
-        await asyncio.sleep(15.0)
+        # Wait 5 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 5 seconds for all stations to boot...")
+        await asyncio.sleep(5.0)
         self._send_status()
 
     def _send_status_value(self, status_value):
@@ -289,8 +289,13 @@ def setup_osc_listener(config, controller, led_controller=None):
             logger.info("Received /led/ready via OSC")
             led_controller.show_ready()
 
+        def handle_led_off(address, *args):
+            logger.info("Received /led/off via OSC")
+            led_controller.stop_indicator()
+
         dispatcher.map("/led/homing", handle_led_homing)
         dispatcher.map("/led/ready", handle_led_ready)
+        dispatcher.map("/led/off", handle_led_off)
 
     try:
         server = BlockingOSCUDPServer(("0.0.0.0", listen_port), dispatcher)
