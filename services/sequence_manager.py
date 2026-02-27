@@ -46,6 +46,7 @@ class SequenceManager:
         # System state
         self.is_running = False
         self.is_resetting = False
+        self.is_booting = True  # True until all stations HOME_END after boot
 
         # OSC clients for sending to stations
         self.osc_clients = {}
@@ -223,6 +224,16 @@ class SequenceManager:
                 logger.info("All stations HOME_END - Reset complete, waiting for V")
                 logger.info("=" * 70)
                 self.is_resetting = False
+
+        # Check if all stations homed (after boot) - auto-start
+        if self.is_booting:
+            if self._check_all_stations_homed():
+                logger.info("=" * 70)
+                logger.info("All stations HOME_END - Boot complete, AUTO-STARTING")
+                logger.info("=" * 70)
+                self.is_booting = False
+                self.is_running = True
+                self._send_to_all("/start")
 
     def _log_status_summary(self):
         """Log a summary of all station states grouped by state"""

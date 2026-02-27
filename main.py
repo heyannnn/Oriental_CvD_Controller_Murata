@@ -217,7 +217,10 @@ class VideoOnlyController:
         self._send_status()
 
     async def initialize(self):
-        """Send initial status to master"""
+        """Wait for boot sync, then send initial status to master"""
+        # Wait 3 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 3 seconds for all stations to boot...")
+        await asyncio.sleep(3.0)
         self._send_status()
 
     def stop(self):

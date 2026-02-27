@@ -173,6 +173,10 @@ class MotorController:
         """
         self._event_loop = asyncio.get_running_loop()
 
+        # Wait 3 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 3 seconds for all stations to boot...")
+        await asyncio.sleep(3.0)
+
         logger.info("=" * 70)
         logger.info(f"Initializing motor controller ({len(self.drivers)} motor(s))...")
         logger.info("=" * 70)
