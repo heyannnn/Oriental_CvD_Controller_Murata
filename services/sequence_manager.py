@@ -47,6 +47,7 @@ class SequenceManager:
         # System state
         self.is_running = False
         self.is_resetting = False
+        self.is_stopping = False  # True until all stations HOME_END after stop
         self.is_booting = True  # True until all stations HOME_END after boot
         self.boot_start_time = None  # Track boot start time for timeout
         self.boot_timeout_sec = 25.0  # Timeout for boot - start anyway after this
@@ -54,6 +55,9 @@ class SequenceManager:
         self.reset_start_time = None  # Track reset start time for timeout
         self.reset_timeout_sec = 25.0  # Timeout for reset
         self._reset_timer_thread = None
+        self.stop_start_time = None  # Track stop start time for timeout
+        self.stop_timeout_sec = 25.0  # Timeout for stop
+        self._stop_timer_thread = None
 
         # OSC clients for sending to stations
         self.osc_clients = {}
@@ -69,7 +73,14 @@ class SequenceManager:
         # Callback to local motor controller
         self._local_motor_controller = None
 
+        # Check if LED homing indicator is enabled for station 07
+        station_07_config = self.all_stations.get("07", {})
+        led_config = station_07_config.get("led", {})
+        self.led_homing_indicator_enabled = led_config.get("homing_indicator", False)
+
         logger.info(f"Sequence manager initialized for {len(self.all_stations)} stations")
+        if self.led_homing_indicator_enabled:
+            logger.info("LED homing indicator enabled for station 07")
 
     def _load_all_stations(self):
         """Load all stations config"""
@@ -153,8 +164,16 @@ class SequenceManager:
 
     def on_start_pressed(self):
         """V key pressed when stopped - start all stations"""
+        if self.is_booting:
+            logger.warning("Ignoring START - boot homing in progress")
+            return
+
         if self.is_resetting:
             logger.warning("Ignoring START - reset in progress")
+            return
+
+        if self.is_stopping:
+            logger.warning("Ignoring START - stop in progress")
             return
 
         if self.is_running:
@@ -165,6 +184,8 @@ class SequenceManager:
         logger.info("START PRESSED - Sending /start to all stations")
         logger.info("=" * 70)
 
+        # Turn off LED indicator before starting
+        self._send_led_off()
         self.is_running = True
         self._send_to_all("/start")
 
@@ -175,7 +196,15 @@ class SequenceManager:
         logger.info("=" * 70)
 
         self.is_running = False
+        self.is_stopping = True
+        self.stop_start_time = time.time()
         self._send_to_all("/stop")
+        # Start LED homing indicator on station 07
+        self._send_led_homing()
+        # Start stop timeout checker
+        self._stop_timer_thread = threading.Thread(target=self._stop_timeout_checker, daemon=True)
+        self._stop_timer_thread.start()
+        logger.info(f"Stop timer started ({self.stop_timeout_sec}s timeout)")
 
     def on_reset_pressed(self):
         """Ctrl+V pressed - reset all stations (stop, home, wait)"""
@@ -222,14 +251,20 @@ class SequenceManager:
 
     def _send_led_homing(self):
         """Tell LED 07 to show homing indicator (blinking BLUE)"""
+        if not self.led_homing_indicator_enabled:
+            return
         self._send_to_station("07", "/led/homing")
 
     def _send_led_ready(self):
         """Tell LED 07 to show ready indicator (solid GREEN)"""
+        if not self.led_homing_indicator_enabled:
+            return
         self._send_to_station("07", "/led/ready")
 
     def _send_led_off(self):
         """Tell LED 07 to turn off indicator"""
+        if not self.led_homing_indicator_enabled:
+            return
         self._send_to_station("07", "/led/off")
 
     # ========================================================================
@@ -251,6 +286,11 @@ class SequenceManager:
             logger.info(f"Station {station_id}: {old_state} -> {state}")
             # Log summary when state changes
             self._log_status_summary()
+
+        # Check if all stations homed (after stop)
+        if self.is_stopping:
+            if self._check_all_stations_homed():
+                self._do_stop_complete()
 
         # Check if all stations homed (after reset)
         if self.is_resetting:
@@ -358,6 +398,43 @@ class SequenceManager:
             elapsed = time.time() - self.reset_start_time
             if elapsed >= self.reset_timeout_sec:
                 self._do_reset_timeout()
+                return
+
+    def _do_stop_complete(self):
+        """Handle stop complete - all stations HOME_END"""
+        if not self.is_stopping:
+            return
+        logger.info("=" * 70)
+        logger.info("All stations HOME_END - Stop complete, waiting for V")
+        logger.info("=" * 70)
+        self.is_stopping = False
+        self.stop_start_time = None
+        # Show LED ready indicator (solid GREEN)
+        self._send_led_ready()
+
+    def _do_stop_timeout(self):
+        """Handle stop timeout - allow V key to start anyway"""
+        if not self.is_stopping:
+            return
+        not_ready = [sid for sid, s in self.station_states.items() if s != "home_end"]
+        logger.warning("=" * 70)
+        logger.warning(f"Stop TIMEOUT ({self.stop_timeout_sec}s) - Ready for V key!")
+        logger.warning(f"Stations not ready: {not_ready}")
+        logger.warning("=" * 70)
+        self.is_stopping = False
+        self.stop_start_time = None
+        # Show LED ready indicator (solid GREEN) - V key can now start
+        self._send_led_ready()
+
+    def _stop_timeout_checker(self):
+        """Background thread to check stop timeout"""
+        while self.is_stopping:
+            time.sleep(0.5)
+            if self.stop_start_time is None:
+                continue
+            elapsed = time.time() - self.stop_start_time
+            if elapsed >= self.stop_timeout_sec:
+                self._do_stop_timeout()
                 return
 
     def _log_status_summary(self):

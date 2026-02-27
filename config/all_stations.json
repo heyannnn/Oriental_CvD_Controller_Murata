@@ -93,7 +93,8 @@
       "video_sync_delay_sec": 1.50,
       "led": {
         "enabled": true,
-        "num_pixels": 2
+        "num_pixels": 2,
+        "homing_indicator": true
       }
     },
 

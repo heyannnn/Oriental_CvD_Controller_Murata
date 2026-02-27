@@ -138,8 +138,9 @@ class KeyboardController:
                         continue
 
                     # Track Ctrl key state
+                    # value: 0 = released, 1 = pressed, 2 = repeat (held down)
                     if event.code in (ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL):
-                        self._ctrl_pressed = (event.value == 1)  # 1 = pressed, 0 = released
+                        self._ctrl_pressed = (event.value != 0)  # True if pressed or held
                         continue
 
                     # Only handle key press (value=1), not release (value=0) or repeat (value=2)

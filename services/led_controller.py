@@ -215,62 +215,71 @@ class LEDController:
         - 14.5s - 15s: OFF
         - OFF (stays off until motor loops and calls on_start again)
         """
+        # Timing config - use 20ms steps for smooth 50fps animation
+        STEP_TIME = 0.02  # 20ms = 50fps (smooth fades)
+        STEPS_PER_SEC = int(1.0 / STEP_TIME)  # 50 steps per second
+
         # Wait for video sync delay first (only on first cycle)
         if not self._skip_sync_delay:
             logger.info(f"Station 07: Starting LED animation ({self.num_pixels} pixels), sync delay: {self.video_sync_delay_sec}s")
-            sync_chunks = int(self.video_sync_delay_sec * 10)
-            for _ in range(sync_chunks):
+            sync_steps = int(self.video_sync_delay_sec * STEPS_PER_SEC)
+            for _ in range(sync_steps):
                 if not self._running:
                     return
-                time.sleep(0.1)
+                time.sleep(STEP_TIME)
         else:
             logger.info(f"Station 07: Starting LED animation ({self.num_pixels} pixels), no sync delay (loop cycle)")
 
         # 0s - 1.5s: OFF
-        for _ in range(15):  # 1.5s in 0.1s chunks
+        off_steps = int(1.5 * STEPS_PER_SEC)  # 75 steps
+        for _ in range(off_steps):
             if not self._running:
                 return
-            time.sleep(0.1)
+            time.sleep(STEP_TIME)
 
         # 1.5s - 6s: Fade in (4.5 seconds)
-        fade_steps = 45  # 0.1s per step
+        fade_in_duration = 4.5
+        fade_in_steps = int(fade_in_duration * STEPS_PER_SEC)  # 225 steps
         base_r, base_g, base_b = self.RED
         logger.info("Station 07: Fade in starting")
-        for step in range(fade_steps):
+        for step in range(fade_in_steps):
             if not self._running:
                 self.all_off()
                 return
-            brightness = (step + 1) / fade_steps
+            brightness = (step + 1) / fade_in_steps
             color = (int(base_r * brightness), int(base_g * brightness), int(base_b * brightness))
             self.all_on(color)
-            time.sleep(0.1)
+            time.sleep(STEP_TIME)
 
-        # 6s - 12.5s: Full brightness (7.5 seconds)
+        # 6s - 12.5s: Full brightness (6.5 seconds)
         self.all_on(self.RED)
-        for _ in range(65):  # 7.5s in 0.1s chunks
+        full_steps = int(6.5 * STEPS_PER_SEC)  # 325 steps
+        for _ in range(full_steps):
             if not self._running:
                 self.all_off()
                 return
-            time.sleep(0.1)
+            time.sleep(STEP_TIME)
 
-        # 12.5s - 14.5s: Fade out (2.5 seconds)
-        fade_steps = 20  # 0.1s per step
+        # 12.5s - 14.5s: Fade out (2 seconds)
+        fade_out_duration = 2.0
+        fade_out_steps = int(fade_out_duration * STEPS_PER_SEC)  # 100 steps
         logger.info("Station 07: Fade out starting")
-        for step in range(fade_steps):
+        for step in range(fade_out_steps):
             if not self._running:
                 self.all_off()
                 return
-            brightness = 1.0 - ((step + 1) / fade_steps)
+            brightness = 1.0 - ((step + 1) / fade_out_steps)
             color = (int(base_r * brightness), int(base_g * brightness), int(base_b * brightness))
             self.all_on(color)
-            time.sleep(0.1)
+            time.sleep(STEP_TIME)
 
         # 14.5s - 15s: OFF (0.5 seconds)
         self.all_off()
-        for _ in range(5):  # 2s in 0.1s chunks
+        end_steps = int(0.5 * STEPS_PER_SEC)  # 25 steps
+        for _ in range(end_steps):
             if not self._running:
                 return
-            time.sleep(0.1)
+            time.sleep(STEP_TIME)
         self._running = False
         logger.info("Station 07: LED cycle complete, waiting for next motor loop")
 
