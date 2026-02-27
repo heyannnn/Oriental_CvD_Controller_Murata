@@ -259,15 +259,17 @@ class SequenceManager:
 
         # Check if all stations homed (after boot) - auto-start
         if self.is_booting:
-            # Start boot timer and LED homing indicator when first status received
+            # Start boot timer when first status received
             if self.boot_start_time is None:
                 self.boot_start_time = time.time()
                 logger.info(f"Boot timer started ({self.boot_timeout_sec}s timeout)")
-                # Start LED homing indicator on station 07
-                self._send_led_homing()
                 # Start background timer thread
                 self._boot_timer_thread = threading.Thread(target=self._boot_timeout_checker, daemon=True)
                 self._boot_timer_thread.start()
+
+            # Start LED homing indicator when station 07 first reports (meaning it's ready to receive)
+            if station_id == "07" and old_state == "unknown":
+                self._send_led_homing()
 
             if self._check_all_stations_homed():
                 self._do_boot_complete()
