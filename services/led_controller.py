@@ -208,11 +208,11 @@ class LEDController:
         """
         Station 07 animation (single cycle, follows motor loop):
         - Wait video_sync_delay_sec (sync with motor) - only on first cycle
-        - 0s - 1.5s: OFF
-        - 1.5s - 6s: Fade in (brightness 0 to max)
+        - 0s - 2s: OFF
+        - 2s - 6s: Fade in (brightness 0 to max)
         - 6s - 12.5s: Full brightness
-        - 12.5s - 14.5s: Fade out (brightness max to 0)
-        - 14.5s - 15s: OFF
+        - 12.5s - 13.5s: Fade out (brightness max to 0)
+        - 13.5s - 15s: OFF
         - OFF (stays off until motor loops and calls on_start again)
         """
         # Timing config - use 20ms steps for smooth 50fps animation
@@ -230,15 +230,15 @@ class LEDController:
         else:
             logger.info(f"Station 07: Starting LED animation ({self.num_pixels} pixels), no sync delay (loop cycle)")
 
-        # 0s - 1.5s: OFF
-        off_steps = int(1.5 * STEPS_PER_SEC)  # 75 steps
+        # 0s - 2s: OFF
+        off_steps = int(2.0 * STEPS_PER_SEC)  # 75 steps
         for _ in range(off_steps):
             if not self._running:
                 return
             time.sleep(STEP_TIME)
 
-        # 1.5s - 6s: Fade in (4.5 seconds)
-        fade_in_duration = 4.5
+        # 2s - 6s: Fade in (4 seconds)
+        fade_in_duration = 4.0
         fade_in_steps = int(fade_in_duration * STEPS_PER_SEC)  # 225 steps
         base_r, base_g, base_b = self.RED
         logger.info("Station 07: Fade in starting")
@@ -260,8 +260,8 @@ class LEDController:
                 return
             time.sleep(STEP_TIME)
 
-        # 12.5s - 14.5s: Fade out (2 seconds)
-        fade_out_duration = 2.0
+        # 12.5s - 13.5s: Fade out (1 seconds)
+        fade_out_duration = 1.0
         fade_out_steps = int(fade_out_duration * STEPS_PER_SEC)  # 100 steps
         logger.info("Station 07: Fade out starting")
         for step in range(fade_out_steps):
@@ -273,9 +273,9 @@ class LEDController:
             self.all_on(color)
             time.sleep(STEP_TIME)
 
-        # 14.5s - 15s: OFF (0.5 seconds)
+        # 13.5s - 15s: OFF (1.5 seconds)
         self.all_off()
-        end_steps = int(0.5 * STEPS_PER_SEC)  # 25 steps
+        end_steps = int(1.5 * STEPS_PER_SEC)  # 15 steps
         for _ in range(end_steps):
             if not self._running:
                 return

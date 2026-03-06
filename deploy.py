@@ -15,6 +15,8 @@ Usage:
     python deploy.py enablerom   - すべてのPiでROMを有効化
     python deploy.py disablerom  - すべてのPiでROMを無効化
     python deploy.py checkrom    - すべてのPiのROMの状態を確認
+    python deploy.py v           - Toggle start/stop (simulates V key on Pi-02)
+    python deploy.py reset       - Reset all stations (simulates Ctrl+V on Pi-02)
 
 Network Mode:
     --vpn                        - Tailscale VPN経由で接続 (default: ローカルネットワーク)
@@ -23,6 +25,8 @@ Examples:
     python deploy.py status              # ローカルネットワーク経由
     python deploy.py --vpn status        # Tailscale VPN経由
     python deploy.py --vpn deploy        # VPN経由でデプロイ
+    python deploy.py --vpn v             # Toggle start/stop (simulates V key on Pi-02)
+    python deploy.py --vpn reset         # Toggle start/stop (simulates V key on Pi-02)
 """
 
 import subprocess
@@ -240,6 +244,22 @@ def check_rom():
         output = result.stdout.decode().strip() if result.stdout else "unknown"
         print(f"Pi-{pi}: {output}")
 
+def send_key_v():
+    """Send /key/v to Pi-02 (simulates V key - toggle start/stop)."""
+    host = get_host("02")
+    print(f"=== Sending /key/v to Pi-02 ({NETWORK_MODE.upper()} mode) ===")
+    cmd = f"cd {REMOTE_PATH} && source venv/bin/activate && python3 -c \"from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 10000); client.send_message('/key/v', []); print('V key sent')\""
+    result = run_ssh(host, cmd)
+    print(result.stdout.decode() if result.stdout else "Done")
+
+def send_key_ctrl_v():
+    """Send /key/reset to Pi-02 (simulates Ctrl+V - reset all)."""
+    host = get_host("02")
+    print(f"=== Sending /key/reset to Pi-02 ({NETWORK_MODE.upper()} mode) ===")
+    cmd = f"cd {REMOTE_PATH} && source venv/bin/activate && python3 -c \"from pythonosc import udp_client; client = udp_client.SimpleUDPClient('127.0.0.1', 10000); client.send_message('/key/reset', []); print('Ctrl+V (reset) sent')\""
+    result = run_ssh(host, cmd)
+    print(result.stdout.decode() if result.stdout else "Done")
+
 def show_help():
     print(__doc__)
 
@@ -284,6 +304,10 @@ if __name__ == "__main__":
         disable_rom()
     elif command == "checkrom":
         check_rom()
+    elif command == "v":
+        send_key_v()
+    elif command == "reset":
+        send_key_ctrl_v()
     else:
         print(f"Unknown command: {command}")
         show_help()

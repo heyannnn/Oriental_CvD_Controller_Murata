@@ -135,6 +135,7 @@ class MotorController:
         self._delayed_start_task = None
         self._event_loop = None
         self._abort_flag = False  # Set to True to abort running operations
+        self._video_command_time = None  # Track when video command sent
 
     def _set_state(self, new_state):
         """Set state and notify callbacks"""
@@ -263,7 +264,7 @@ class MotorController:
                 else:
                     all_homed = False
 
-            if elapsed - last_log_time >= 1.0:
+            if elapsed - last_log_time >= 0.05:
                 logger.info(f"Homing: {elapsed:.1f}s | HOME_END: {homed_count}/{len(needs_homing)}")
                 last_log_time = elapsed
 
@@ -311,6 +312,7 @@ class MotorController:
             return
 
         # Send video command
+        self._video_command_time = time.time()  # Record timestamp
         self.mp4_player.send_command("start")
 
         # Wait for video sync delay, then start operation
@@ -437,6 +439,9 @@ class MotorController:
         self.current_operation = op_no
 
         for i, driver in enumerate(self.drivers):
+            motor_start_time = time.time()
+            delay_ms = (motor_start_time - self._video_command_time) * 1000 if self._video_command_time else 0
+            logger.info(f"  t({self.motor_names[i]}_start) - t(video_start) = {delay_ms:.1f}ms")
             driver.start_operation(op_no=op_no)
 
         if self._event_loop:
@@ -485,7 +490,7 @@ class MotorController:
                 if not motor_done:
                     all_ready = False
 
-            if elapsed - last_log_time >= 1.0:
+            if elapsed - last_log_time >= 0.05:
                 ready_count = sum(1 for i in range(len(self.drivers))
                                   if self.drivers[i].is_ready() and ready_went_low[i])
                 logger.info(f"Op {self.current_operation}: {elapsed:.1f}s | READY: {ready_count}/{len(self.drivers)}")
@@ -532,6 +537,7 @@ class MotorController:
         if self.led_controller:
             self.led_controller.on_start(skip_sync_delay=True)
 
+        self._video_command_time = time.time()  # Record timestamp
         self.mp4_player.send_command("standby")
         self.start_operation(op_no=0)
 
@@ -626,7 +632,7 @@ class MotorController:
                 if not motor_done:
                     all_ready = False
 
-            if elapsed - last_log_time >= 1.0:
+            if elapsed - last_log_time >= 0.05:
                 ready_count = sum(1 for i in range(len(self.drivers))
                                   if self.drivers[i].is_ready() and ready_went_low[i])
                 logger.info(f"Return to zero: {elapsed:.1f}s | READY: {ready_count}/{len(self.drivers)}")

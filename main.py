@@ -32,7 +32,7 @@ import threading
 # Setup logging - will add file handler after we know station_id
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    format='%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s',
     datefmt='%H:%M:%S'
 )
 
@@ -45,7 +45,7 @@ def setup_file_logging(station_id):
     file_handler = logging.FileHandler(log_file, mode='a')
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        '%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s',
         datefmt='%H:%M:%S'
     ))
     logging.getLogger().addHandler(file_handler)

@@ -115,6 +115,9 @@ class SequenceManager:
         dispatcher.map("/start", self._handle_start_osc)
         dispatcher.map("/stop", self._handle_stop_osc)
         dispatcher.map("/reset", self._handle_reset_osc)
+        # Remote keyboard simulation (from deploy.py)
+        dispatcher.map("/key/v", self._handle_key_v)
+        dispatcher.map("/key/reset", self._handle_key_reset)
 
         try:
             self.server = BlockingOSCUDPServer(("0.0.0.0", listen_port), dispatcher)
@@ -136,6 +139,19 @@ class SequenceManager:
         """Handle /reset OSC for local motor controller"""
         if self._local_motor_controller:
             self._local_motor_controller.on_reset()
+
+    def _handle_key_v(self, address, *args):
+        """Handle /key/v - simulate V key press (toggle start/stop)"""
+        logger.info("Remote: /key/v received (simulating V key)")
+        if self.is_running:
+            self.on_stop_pressed()
+        else:
+            self.on_start_pressed()
+
+    def _handle_key_reset(self, address, *args):
+        """Handle /key/reset - simulate Ctrl+V press"""
+        logger.info("Remote: /key/reset received (simulating Ctrl+V)")
+        self.on_reset_pressed()
 
     def start_server(self):
         """Start OSC server in background thread"""
