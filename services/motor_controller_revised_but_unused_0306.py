@@ -183,9 +183,9 @@ class MotorController:
         # Send "booting" status immediately so master knows we exist
         self._send_status_value("booting")
 
-        # Wait 20 seconds on boot to let all stations power up and master to start listening
-        logger.info("Waiting 20 seconds for all stations to boot...")
-        await asyncio.sleep(20.0)
+        # Wait 5 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 5 seconds for all stations to boot...")
+        await asyncio.sleep(5.0)
 
         logger.info("=" * 70)
         logger.info(f"Initializing motor controller ({len(self.drivers)} motor(s))...")
@@ -202,6 +202,15 @@ class MotorController:
                 if self._on_error:
                     self._on_error(f"Connection failed: {e}")
                 return
+            
+        # Clean state like reset does
+        # logger.info("Clearing motor state...")
+        # for driver in self.drivers:
+        #     driver.stop()
+        # await asyncio.sleep(0.3)
+        # for driver in self.drivers:
+        #     driver.clear_alarm()
+        # await asyncio.sleep(0.3)
 
         # Check if motors need homing
         if self.homing_required:
@@ -217,7 +226,7 @@ class MotorController:
                 self._set_state(MotorState.HOMING)
 
                 try:
-                    await self._parallel_homing(timeout=100)
+                    await self._parallel_homing(timeout=25)
                     self._set_state(MotorState.HOME_END)
                     if self._on_home_end:
                         self._on_home_end()
@@ -232,7 +241,7 @@ class MotorController:
             if self._on_home_end:
                 self._on_home_end()
 
-    async def _parallel_homing(self, timeout=100):
+    async def _parallel_homing(self, timeout=25):
         """Home all motors in parallel."""
         needs_homing = []
         for i, driver in enumerate(self.drivers):
@@ -261,12 +270,10 @@ class MotorController:
             for i in needs_homing:
                 if self.drivers[i].is_home_complete():
                     homed_count += 1
-                # READYも読む
-                elif self.drivers[i].is_ready():
-                    # Ready - consider it homed
-                    homed_count += 1
-                    logger.info(f"  {self.motor_names[i]}: at position 0, considering homed")
-                # READYも読む
+                # elif self.drivers[i].is_ready() and abs(self.drivers[i].read_position()) < 10:
+                #     # Already at home position and ready - consider it homed
+                #     homed_count += 1
+                #     logger.info(f"  {self.motor_names[i]}: at position 0, considering homed")
                 else:
                     all_homed = False
 
@@ -361,9 +368,9 @@ class MotorController:
         # Stop LED animation
         if self.led_controller:
             self.led_controller.on_stop()
-
-        self.stop()
+        
         self.mp4_player.send_command("stop")
+        self.stop()
 
     def on_reset(self):
         """Handle /reset OSC command - stop, clear alarm, home, wait"""
@@ -420,7 +427,7 @@ class MotorController:
         # Home all motors
         self._set_state(MotorState.HOMING)
         try:
-            await self._parallel_homing(timeout=100)
+            await self._parallel_homing(timeout=25)
             self._set_state(MotorState.HOME_END)
             if self._on_home_end:
                 self._on_home_end()
@@ -564,7 +571,7 @@ class MotorController:
         # Home
         self._set_state(MotorState.HOMING)
         try:
-            await self._parallel_homing(timeout=100)
+            await self._parallel_homing(timeout=25)
             self._set_state(MotorState.HOME_END)
 
             # Auto-restart loop
@@ -632,7 +639,6 @@ class MotorController:
             all_ready = True
             for i, driver in enumerate(self.drivers):
                 ready = driver.is_ready()
-                #CHECK READY inside loop
                 pos = driver.read_position()
                 
                 if ready and abs(pos) < 10:
@@ -641,13 +647,13 @@ class MotorController:
                     if not ready:
                         ready_went_low[i] = True
                     motor_done = ready and ready_went_low[i]
-                #CHECK READY inside loop
                 if not motor_done:
                     all_ready = False
 
             if elapsed - last_log_time >= 0.05:
                 ready_count = sum(1 for i in range(len(self.drivers))
-                                  if self.drivers[i].is_ready() and ready_went_low[i])
+                                  if (self.drivers[i].is_ready() and abs(self.drivers[i].read_position()) < 10) or
+                                     (self.drivers[i].is_ready() and ready_went_low[i]))
                 logger.info(f"Return to zero: {elapsed:.1f}s | READY: {ready_count}/{len(self.drivers)}")
                 last_log_time = elapsed
 
@@ -656,7 +662,7 @@ class MotorController:
                 self._set_state(MotorState.HOME_END)
                 return
 
-            if elapsed > 120:
+            if elapsed > 25:
                 logger.error("Return to zero timeout")
                 self._set_state(MotorState.ERROR)
                 return

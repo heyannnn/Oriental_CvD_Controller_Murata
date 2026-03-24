@@ -50,7 +50,7 @@ class SequenceManager:
         self.is_stopping = False  # True until all stations HOME_END after stop
         self.is_booting = True  # True until all stations HOME_END after boot
         self.boot_start_time = None  # Track boot start time for timeout
-        self.boot_timeout_sec = 25.0  # Timeout for boot - start anyway after this
+        self.boot_timeout_sec = 50.0  # Timeout for boot - start anyway after this
         self._boot_timer_thread = None
         self.reset_start_time = None  # Track reset start time for timeout
         self.reset_timeout_sec = 25.0  # Timeout for reset

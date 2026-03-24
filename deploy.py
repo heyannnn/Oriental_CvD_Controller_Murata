@@ -17,20 +17,42 @@ Usage:
     python deploy.py checkrom    - すべてのPiのROMの状態を確認
     python deploy.py v           - Toggle start/stop (simulates V key on Pi-02)
     python deploy.py reset       - Reset all stations (simulates Ctrl+V on Pi-02)
+    python deploy.py diff        - ローカルとリモートのファイルを比較（チェックサムベース）
+    python deploy.py diff --verbose - ファイルの差分を詳細表示
 
 Network Mode:
     --vpn                        - Tailscale VPN経由で接続 (default: ローカルネットワーク)
 
 Examples:
-    python deploy.py status              # ローカルネットワーク経由
-    python deploy.py --vpn status        # Tailscale VPN経由
-    python deploy.py --vpn deploy        # VPN経由でデプロイ
-    python deploy.py --vpn v             # Toggle start/stop (simulates V key on Pi-02)
-    python deploy.py --vpn reset         # Toggle start/stop (simulates V key on Pi-02)
+    python deploy.py status                    # ローカルネットワーク経由
+    python deploy.py --vpn status              # Tailscale VPN経由
+    python deploy.py --vpn deploy              # VPN経由でデプロイ
+    python deploy.py --vpn v                   # Toggle start/stop (simulates V key on Pi-02)
+    python deploy.py --vpn reset               # Toggle start/stop (simulates V key on Pi-02)
+    python deploy.py --vpn diff                # ローカルとリモートのファイルを比較
+    python deploy.py --vpn diff --verbose      # ファイルの差分を詳細表示
+    python deploy.py --vpn disablerom
+    python deploy.py --vpn checkrom
+    python deploy.py --vpn enablerom 
+    python deploy.py --vpn reboot
+
+
 """
 
 import subprocess
 import sys
+import hashlib
+import os
+
+# ANSI color codes
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
 
 # Configuration
 PASSWORD = "fukuimurata"
@@ -260,15 +282,213 @@ def send_key_ctrl_v():
     result = run_ssh(host, cmd)
     print(result.stdout.decode() if result.stdout else "Done")
 
+def get_local_checksum(file_path):
+    """Calculate MD5 checksum of a local file."""
+    try:
+        md5_hash = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                md5_hash.update(chunk)
+        return md5_hash.hexdigest()
+    except Exception as e:
+        return None
+
+def get_remote_checksum(host, remote_path):
+    """Get MD5 checksum of a remote file via SSH."""
+    result = run_ssh(host, f"md5sum {remote_path} 2>/dev/null || echo 'ERROR'")
+    if result.returncode == 0 and result.stdout:
+        output = result.stdout.decode().strip()
+        if output and output != 'ERROR' and not output.startswith('md5sum:'):
+            # md5sum output format: "checksum filename"
+            return output.split()[0]
+    return None
+
+def get_remote_diff(host, local_path, remote_path):
+    """Get actual diff between local and remote file."""
+    try:
+        # Create a temporary file on remote with local content
+        with open(local_path, 'r', encoding='utf-8') as f:
+            local_content = f.read()
+
+        # Escape single quotes in content for shell
+        escaped_content = local_content.replace("'", "'\\''")
+
+        # Create temp file and run diff
+        temp_file = f"/tmp/deploy_diff_temp_{os.getpid()}"
+        cmd = f"cat > {temp_file} << 'DEPLOY_DIFF_EOF'\n{escaped_content}\nDEPLOY_DIFF_EOF\n"
+        cmd += f"diff -u {remote_path} {temp_file} 2>/dev/null; rm -f {temp_file}"
+
+        result = run_ssh(host, cmd)
+        if result.stdout:
+            return result.stdout.decode()
+        return "Unable to generate diff"
+    except Exception as e:
+        return f"Error generating diff: {str(e)}"
+
+def format_diff_readable(diff_output, pi_number):
+    """Format diff output in a more readable way with colors."""
+    lines = diff_output.split('\n')
+    formatted_lines = []
+    line_num = None
+
+    for line in lines:
+        # Skip the file headers (--- and +++)
+        if line.startswith('---') or line.startswith('+++'):
+            continue
+
+        # Parse the line numbers from @@ -X,Y +A,B @@
+        if line.startswith('@@'):
+            # Extract line number information
+            parts = line.split()
+            if len(parts) >= 3:
+                # Get the remote line number (first number after @@)
+                remote_line = parts[1].strip('-').split(',')[0]
+                formatted_lines.append(f"\n    {Colors.CYAN}[Around line {remote_line}]{Colors.RESET}")
+            continue
+
+        # Lines starting with - are in remote (removed)
+        if line.startswith('-'):
+            content = line[1:]  # Remove the - prefix
+            formatted_lines.append(f"      {Colors.RED}REMOTE (Pi-{pi_number}): {content}{Colors.RESET}")
+
+        # Lines starting with + are in local (added)
+        elif line.startswith('+'):
+            content = line[1:]  # Remove the + prefix
+            formatted_lines.append(f"      {Colors.GREEN}LOCAL:           {content}{Colors.RESET}")
+
+        # Lines with no prefix are context (unchanged)
+        elif line.strip():
+            # Only show context if it's meaningful (not just whitespace)
+            if len(line.strip()) > 0:
+                formatted_lines.append(f"      {Colors.BLUE}       {line}{Colors.RESET}")
+
+    return '\n'.join(formatted_lines)
+
+def compare_files(verbose=False):
+    """Compare local files with remote files on each Pi."""
+    print(f"=== Comparing files with remote stations ({NETWORK_MODE.upper()} mode) ===\n")
+
+    # Track checksums for cross-station comparison
+    # Structure: {file_name: {pi_number: checksum}}
+    file_checksums = {}
+    online_stations = set()
+
+    for pi in PI_NUMBERS:
+        host = get_host(pi)
+        print(f"Pi-{pi} ({host}):")
+
+        # Determine which files this Pi should have
+        files = FILES_ALL.copy()
+        if pi == "02":
+            files += FILES_PI02_ONLY
+        if pi in ["07", "10"]:
+            files += FILES_LED_STATIONS
+
+        # Test connectivity first
+        test_result = run_ssh(host, "echo 'online'")
+        if test_result.returncode != 0:
+            print(f"  {Colors.YELLOW}⚠ OFFLINE - Cannot connect to Pi-{pi}{Colors.RESET}")
+            print()
+            continue
+
+        online_stations.add(pi)
+
+        # Compare each file
+        has_differences = False
+        for local_path, remote_name in files:
+            remote_full_path = f"{REMOTE_PATH}{remote_name}"
+
+            # Check if local file exists
+            if not os.path.exists(local_path):
+                print(f"  {Colors.YELLOW}⚠ {remote_name} - LOCAL FILE MISSING{Colors.RESET}")
+                has_differences = True
+                continue
+
+            # Get checksums
+            local_checksum = get_local_checksum(local_path)
+            remote_checksum = get_remote_checksum(host, remote_full_path)
+
+            # Track checksums for cross-station comparison
+            if remote_name not in file_checksums:
+                file_checksums[remote_name] = {}
+            file_checksums[remote_name][pi] = remote_checksum
+
+            if local_checksum is None:
+                print(f"  {Colors.YELLOW}⚠ {remote_name} - ERROR reading local file{Colors.RESET}")
+                has_differences = True
+            elif remote_checksum is None:
+                print(f"  {Colors.YELLOW}⚠ {remote_name} - MISSING on remote{Colors.RESET}")
+                has_differences = True
+            elif local_checksum == remote_checksum:
+                print(f"  {Colors.GREEN}✓ {remote_name} - identical{Colors.RESET}")
+            else:
+                print(f"  {Colors.RED}✗ {remote_name} - DIFFERENT{Colors.RESET}")
+                has_differences = True
+
+                # Show detailed diff if verbose mode
+                if verbose:
+                    print(f"    {Colors.BOLD}Changes:{Colors.RESET}")
+                    diff_output = get_remote_diff(host, local_path, remote_full_path)
+                    formatted_diff = format_diff_readable(diff_output, pi)
+                    print(formatted_diff)
+                    print()
+
+        if not has_differences:
+            print(f"  {Colors.GREEN}✅ All files identical{Colors.RESET}")
+
+        print()
+
+    # Show cross-station comparison summary
+    if len(online_stations) > 1:
+        print(f"\n{Colors.BOLD}=== Station-to-Station Comparison ==={Colors.RESET}\n")
+
+        for file_name in sorted(file_checksums.keys()):
+            checksums = file_checksums[file_name]
+
+            # Group stations by checksum
+            checksum_groups = {}
+            for pi, checksum in checksums.items():
+                if checksum is not None and checksum != 'ERROR':
+                    if checksum not in checksum_groups:
+                        checksum_groups[checksum] = []
+                    checksum_groups[checksum].append(pi)
+
+            # Display grouped stations
+            print(f"{Colors.CYAN}{file_name}:{Colors.RESET}")
+
+            if len(checksum_groups) == 0:
+                print(f"  {Colors.YELLOW}No valid checksums found{Colors.RESET}")
+            elif len(checksum_groups) == 1:
+                all_pis = sorted(list(checksum_groups.values())[0])
+                print(f"  {Colors.GREEN}✓ All stations identical: Pi-{', Pi-'.join(all_pis)}{Colors.RESET}")
+            else:
+                # Multiple versions exist
+                group_num = 1
+                for checksum, pis in sorted(checksum_groups.items(), key=lambda x: len(x[1]), reverse=True):
+                    pis_sorted = sorted(pis)
+                    if len(pis) == 1:
+                        print(f"  {Colors.YELLOW}⚠ Different (unique): Pi-{pis_sorted[0]}{Colors.RESET}")
+                    else:
+                        print(f"  {Colors.BLUE}Group {group_num} (identical): Pi-{', Pi-'.join(pis_sorted)}{Colors.RESET}")
+                        group_num += 1
+
+            print()
+
 def show_help():
     print(__doc__)
 
 if __name__ == "__main__":
-    # Parse --vpn flag
+    # Parse --vpn and --verbose flags
     args = sys.argv[1:]
+    verbose = False
+
     if "--vpn" in args:
         NETWORK_MODE = "vpn"
         args.remove("--vpn")
+
+    if "--verbose" in args:
+        verbose = True
+        args.remove("--verbose")
 
     if len(args) < 1:
         show_help()
@@ -308,6 +528,8 @@ if __name__ == "__main__":
         send_key_v()
     elif command == "reset":
         send_key_ctrl_v()
+    elif command == "diff":
+        compare_files(verbose=verbose)
     else:
         print(f"Unknown command: {command}")
         show_help()

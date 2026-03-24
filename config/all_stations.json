@@ -65,7 +65,7 @@
       ],
       "homing_required": true,
       "return_to_zero_on_stop": true,
-      "check_homes_during_running": false,
+      "check_homes_during_running": true,
       "video_sync_delay_sec": 10.50
     },
 
@@ -109,7 +109,7 @@
       "homing_required": true,
       "return_to_zero_on_stop": true,
       "check_homes_during_running": true,
-      "video_sync_delay_sec": 2.50
+      "video_sync_delay_sec": 1.25
     },
 
     "09": {

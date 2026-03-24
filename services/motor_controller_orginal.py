@@ -183,9 +183,9 @@ class MotorController:
         # Send "booting" status immediately so master knows we exist
         self._send_status_value("booting")
 
-        # Wait 20 seconds on boot to let all stations power up and master to start listening
-        logger.info("Waiting 20 seconds for all stations to boot...")
-        await asyncio.sleep(20.0)
+        # Wait 5 seconds on boot to let all stations power up and master to start listening
+        logger.info("Waiting 5 seconds for all stations to boot...")
+        await asyncio.sleep(5.0)
 
         logger.info("=" * 70)
         logger.info(f"Initializing motor controller ({len(self.drivers)} motor(s))...")
@@ -261,12 +261,6 @@ class MotorController:
             for i in needs_homing:
                 if self.drivers[i].is_home_complete():
                     homed_count += 1
-                # READYも読む
-                elif self.drivers[i].is_ready():
-                    # Ready - consider it homed
-                    homed_count += 1
-                    logger.info(f"  {self.motor_names[i]}: at position 0, considering homed")
-                # READYも読む
                 else:
                     all_homed = False
 
@@ -632,16 +626,9 @@ class MotorController:
             all_ready = True
             for i, driver in enumerate(self.drivers):
                 ready = driver.is_ready()
-                #CHECK READY inside loop
-                pos = driver.read_position()
-                
-                if ready and abs(pos) < 10:
-                    motor_done = True
-                else:
-                    if not ready:
-                        ready_went_low[i] = True
-                    motor_done = ready and ready_went_low[i]
-                #CHECK READY inside loop
+                if not ready:
+                    ready_went_low[i] = True
+                motor_done = ready and ready_went_low[i]
                 if not motor_done:
                     all_ready = False
 
