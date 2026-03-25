@@ -27,6 +27,7 @@ Examples:
     python deploy.py status                    # ローカルネットワーク経由
     python deploy.py --vpn status              # Tailscale VPN経由
     python deploy.py --vpn deploy              # VPN経由でデプロイ
+    python deploy.py --vpn files 
     python deploy.py --vpn v                   # Toggle start/stop (simulates V key on Pi-02)
     python deploy.py --vpn reset               # Toggle start/stop (simulates V key on Pi-02)
     python deploy.py --vpn diff                # ローカルとリモートのファイルを比較

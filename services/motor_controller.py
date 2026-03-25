@@ -202,6 +202,12 @@ class MotorController:
                 if self._on_error:
                     self._on_error(f"Connection failed: {e}")
                 return
+            
+        # Clear alarms first (like reset does)
+        logger.info("Clearing alarms before homing...")
+        for driver in self.drivers:
+            driver.clear_alarm()
+        await asyncio.sleep(0.3)
 
         # Check if motors need homing
         if self.homing_required:
