@@ -44,6 +44,7 @@ import subprocess
 import sys
 import hashlib
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ANSI color codes
 class Colors:
@@ -120,6 +121,32 @@ KEEP_SERVICES_PI02 = ["motor_controller.py", "motor_driver.py", "mp4_player.py",
 def run_ssh(host, command):
     cmd = ["sshpass", "-p", PASSWORD, "ssh", f"{USER}@{host}", command]
     return subprocess.run(cmd, capture_output=True)
+
+def run_ssh_parallel(pi_command_dict, max_workers=11):
+    """
+    Run SSH commands in parallel across multiple Pis.
+
+    Args:
+        pi_command_dict: Dict mapping pi_number -> command string
+        max_workers: Maximum concurrent threads (default: 11 for all Pis)
+
+    Returns:
+        Dict mapping pi_number -> subprocess result
+    """
+    results = {}
+
+    def execute_for_pi(pi):
+        host = get_host(pi)
+        command = pi_command_dict[pi]
+        return pi, run_ssh(host, command)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(execute_for_pi, pi): pi for pi in pi_command_dict}
+        for future in as_completed(futures):
+            pi, result = future.result()
+            results[pi] = result
+
+    return results
 
 
 def status():
@@ -221,49 +248,82 @@ def deploy_files():
             print(f"✗ Pi-{pi} had errors")
 
 def shutdown_all():
-    """Shutdown all Pis."""
+    """Shutdown all Pis in parallel."""
     print(f"=== Shutting down all Pis ({NETWORK_MODE.upper()} mode) ===\n")
+
+    # Build command dict for all Pis
+    commands = {pi: "sudo shutdown -h now" for pi in PI_NUMBERS}
+
+    # Execute in parallel
+    results = run_ssh_parallel(commands)
+
+    # Print results in order
     for pi in PI_NUMBERS:
-        host = get_host(pi)
-        run_ssh(host, "sudo shutdown -h now")
         print(f"Pi-{pi}: ⏻ shutdown initiated")
 
 def reboot_all():
-    """Reboot all Pis."""
+    """Reboot all Pis in parallel."""
     print(f"=== Rebooting all Pis ({NETWORK_MODE.upper()} mode) ===\n")
+
+    # Build command dict for all Pis
+    commands = {pi: "sudo reboot" for pi in PI_NUMBERS}
+
+    # Execute in parallel
+    results = run_ssh_parallel(commands)
+
+    # Print results in order
     for pi in PI_NUMBERS:
-        host = get_host(pi)
-        run_ssh(host, "sudo reboot")
         print(f"Pi-{pi}: ↻ reboot initiated")
 
 def enable_rom():
-    """Enable read-only filesystem on all Pis."""
+    """Enable read-only filesystem on all Pis in parallel."""
     print(f"=== Enabling read-only filesystem on all Pis ({NETWORK_MODE.upper()} mode) ===\n")
+
+    # Build command dict for all Pis
+    commands = {pi: "~/EnableROM.sh" for pi in PI_NUMBERS}
+
+    # Execute in parallel
+    results = run_ssh_parallel(commands)
+
+    # Print results in order
     for pi in PI_NUMBERS:
-        host = get_host(pi)
-        result = run_ssh(host, "~/EnableROM.sh")
+        result = results[pi]
         if result.returncode == 0:
             print(f"Pi-{pi}: ✓ ROM enabled")
         else:
             print(f"Pi-{pi}: ✗ Failed - {result.stderr.decode().strip() if result.stderr else 'unknown error'}")
 
 def disable_rom():
-    """Disable read-only filesystem on all Pis."""
+    """Disable read-only filesystem on all Pis in parallel."""
     print(f"=== Disabling read-only filesystem on all Pis ({NETWORK_MODE.upper()} mode) ===\n")
+
+    # Build command dict for all Pis
+    commands = {pi: "~/DisableROM.sh" for pi in PI_NUMBERS}
+
+    # Execute in parallel
+    results = run_ssh_parallel(commands)
+
+    # Print results in order
     for pi in PI_NUMBERS:
-        host = get_host(pi)
-        result = run_ssh(host, "~/DisableROM.sh")
+        result = results[pi]
         if result.returncode == 0:
             print(f"Pi-{pi}: ✓ ROM disabled")
         else:
             print(f"Pi-{pi}: ✗ Failed - {result.stderr.decode().strip() if result.stderr else 'unknown error'}")
 
 def check_rom():
-    """Check read-only filesystem status on all Pis."""
+    """Check read-only filesystem status on all Pis in parallel."""
     print(f"=== Checking ROM status on all Pis ({NETWORK_MODE.upper()} mode) ===\n")
+
+    # Build command dict for all Pis
+    commands = {pi: "~/CheckROM.sh" for pi in PI_NUMBERS}
+
+    # Execute in parallel
+    results = run_ssh_parallel(commands)
+
+    # Print results in order
     for pi in PI_NUMBERS:
-        host = get_host(pi)
-        result = run_ssh(host, "~/CheckROM.sh")
+        result = results[pi]
         output = result.stdout.decode().strip() if result.stdout else "unknown"
         print(f"Pi-{pi}: {output}")
 
