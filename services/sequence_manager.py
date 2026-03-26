@@ -44,19 +44,23 @@ class SequenceManager:
         for station_id in self.all_stations:
             self.station_states[station_id] = "unknown"
 
+        # Track when stations enter error/unknown state
+        self.error_state_times = {}  # {station_id: timestamp}
+        self.error_reset_delay_sec = 5.0  # Wait 5s before sending reset
+
         # System state
         self.is_running = False
         self.is_resetting = False
         self.is_stopping = False  # True until all stations HOME_END after stop
         self.is_booting = True  # True until all stations HOME_END after boot
         self.boot_start_time = None  # Track boot start time for timeout
-        self.boot_timeout_sec = 90.0  # Timeout for boot - start anyway after this
+        self.boot_timeout_sec = 150.0  # Timeout for boot - start anyway after this
         self._boot_timer_thread = None
         self.reset_start_time = None  # Track reset start time for timeout
-        self.reset_timeout_sec = 25.0  # Timeout for reset
+        self.reset_timeout_sec = 30.0  # Timeout for reset
         self._reset_timer_thread = None
         self.stop_start_time = None  # Track stop start time for timeout
-        self.stop_timeout_sec = 25.0  # Timeout for stop
+        self.stop_timeout_sec = 30.0  # Timeout for stop
         self._stop_timer_thread = None
 
         # OSC clients for sending to stations
@@ -326,7 +330,28 @@ class SequenceManager:
             # Start LED homing indicator when station 07 first reports (meaning it's ready to receive)
             if station_id == "07" and old_state == "unknown":
                 self._send_led_homing()
+            
+            # Handle ERROR stations - send reset after delay
+            if state == "error":
+                # Track when this station first entered error
+                if station_id not in self.error_state_times:
+                    self.error_state_times[station_id] = time.time()
+                    logger.warning(f"Station {station_id} in ERROR - will send /reset after {self.error_reset_delay_sec}s if not recovered")
+                else:
+                    # Check if delay has elapsed
+                    elapsed = time.time() - self.error_state_times[station_id]
+                    if elapsed >= self.error_reset_delay_sec:
+                        logger.warning(f"Station {station_id} still in ERROR after {elapsed:.1f}s - sending /reset")
+                        self._send_to_station(station_id, "/reset")
+                        # Reset timer to avoid spamming reset
+                        self.error_state_times[station_id] = time.time()
+            else:
+                # Station recovered (not error), clear timer
+                if station_id in self.error_state_times:
+                    logger.info(f"Station {station_id} recovered from ERROR state")
+                    del self.error_state_times[station_id]
 
+            # Check if all stations homed
             if self._check_all_stations_homed():
                 self._do_boot_complete()
 
@@ -338,6 +363,7 @@ class SequenceManager:
         logger.info("All stations HOME_END - Boot complete")
         logger.info("=" * 70)
         self.is_booting = False
+        self.error_state_times = {}  # Clear error tracking
         # Show green LED for 2 seconds, then start
         self._send_led_ready()
         logger.info("Showing GREEN for 2 seconds before auto-start...")
@@ -369,15 +395,52 @@ class SequenceManager:
         threading.Thread(target=self._delayed_auto_start, daemon=True).start()
 
     def _boot_timeout_checker(self):
-        """Background thread to check boot timeout"""
+        """Background thread to check boot timeout and unknown stations"""
+        unknown_station_check_interval = 2.0  # Check every 2 seconds
+        last_unknown_check = time.time()
+
         while self.is_booting:
             time.sleep(0.5)
+
             if self.boot_start_time is None:
                 continue
+
             elapsed = time.time() - self.boot_start_time
+
+            # Check for boot timeout
             if elapsed >= self.boot_timeout_sec:
                 self._do_boot_timeout()
                 return
+
+            # Periodically check for stations stuck in "unknown" state
+            if time.time() - last_unknown_check >= unknown_station_check_interval:
+                last_unknown_check = time.time()
+                self._check_unknown_stations()
+
+    def _check_unknown_stations(self):
+        """Check for stations that remain 'unknown' and send reset"""
+        for station_id, state in self.station_states.items():
+            if state == "unknown":
+                # Track when this station was first detected as unknown
+                if station_id not in self.error_state_times:
+                    # Just discovered it's still unknown, start timer
+                    self.error_state_times[station_id] = time.time()
+                    logger.warning(f"Station {station_id} still UNKNOWN - will send /reset after {self.error_reset_delay_sec}s")
+                else:
+                    # Check if enough time has elapsed
+                    elapsed = time.time() - self.error_state_times[station_id]
+                    if elapsed >= self.error_reset_delay_sec:
+                        logger.warning(f"Station {station_id} still UNKNOWN after {elapsed:.1f}s - sending /reset")
+                        self._send_to_station(station_id, "/reset")
+                        # Reset timer to avoid spamming
+                        self.error_state_times[station_id] = time.time()
+            else:
+                # Station no longer unknown, clear its timer
+                if station_id in self.error_state_times:
+                    # Only clear if it was being tracked for "unknown" state
+                    # (Don't clear if it's being tracked for "error" state)
+                    if self.station_states.get(station_id) not in ["error", "unknown"]:
+                        del self.error_state_times[station_id]
 
     def _do_reset_complete(self):
         """Handle reset complete - all stations HOME_END"""

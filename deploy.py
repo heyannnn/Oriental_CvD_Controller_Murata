@@ -24,7 +24,9 @@ Network Mode:
     --vpn                        - Tailscale VPN経由で接続 (default: ローカルネットワーク)
 
 Examples:
-    python deploy.py status                    # ローカルネットワーク経由
+    python deploy.py --vpn status              # ローカルネットワーク経由
+    python deploy.py --vpn logs 02
+    python deploy.py --vpn stop
     python deploy.py --vpn status              # Tailscale VPN経由
     python deploy.py --vpn deploy              # VPN経由でデプロイ
     python deploy.py --vpn files 

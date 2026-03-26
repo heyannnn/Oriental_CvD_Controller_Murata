@@ -89,6 +89,7 @@ class MotorController:
 
         self.drivers = []
         self.motor_names = []
+        self.connected_motors = []
 
         for motor_config in motors_config:
             port = motor_config.get('port', serial_config.get('port', '/dev/ttyAMA0'))
@@ -191,6 +192,70 @@ class MotorController:
         logger.info(f"Initializing motor controller ({len(self.drivers)} motor(s))...")
         logger.info("=" * 70)
 
+        # # Connect to all motors with retry logic
+        # MAX_RETRIES = 3
+        # RETRY_DELAY = 2.0
+        # self.connected_motors = []  # Track which motors successfully connected
+
+        # for i, driver in enumerate(self.drivers):
+        #     logger.info(f"Connecting to {self.motor_names[i]} (slave_id={driver.slave_id})...")
+        #     connected = False
+
+        #     for attempt in range(1, MAX_RETRIES + 1):
+        #         try:
+        #             # Attempt connection
+        #             driver.connect()
+        #             logger.info(f"  Attempt {attempt}/{MAX_RETRIES}: Connection opened")
+
+        #             # Clear alarm (motor might be in alarm state from previous session)
+        #             try:
+        #                 driver.clear_alarm()
+        #                 await asyncio.sleep(0.3)
+        #                 logger.info(f"  Attempt {attempt}/{MAX_RETRIES}: Alarm cleared")
+        #             except Exception as alarm_err:
+        #                 logger.warning(f"  Attempt {attempt}/{MAX_RETRIES}: Failed to clear alarm: {alarm_err}")
+
+        #             # Verify communication by reading a register
+        #             try:
+        #                 ready_status = driver.is_ready()
+        #                 alarm_status = driver.get_alarm_status()
+        #                 logger.info(f"  Attempt {attempt}/{MAX_RETRIES}: Communication verified (READY={ready_status}, ALARM={alarm_status})")
+
+        #                 # Connection successful!
+        #                 connected = True
+        #                 self.connected_motors.append(i)
+        #                 logger.info(f"  ✓ {self.motor_names[i]} connected successfully")
+        #                 break  # Exit retry loop
+
+        #             except Exception as verify_err:
+        #                 logger.warning(f"  Attempt {attempt}/{MAX_RETRIES}: Failed to verify communication: {verify_err}")
+        #                 raise  # Trigger retry
+
+        #         except Exception as e:
+        #             logger.warning(f"  Attempt {attempt}/{MAX_RETRIES}: Connection failed - {e}")
+
+        #             if attempt < MAX_RETRIES:
+        #                 logger.info(f"  Retrying in {RETRY_DELAY}s...")
+        #                 await asyncio.sleep(RETRY_DELAY)
+        #             else:
+        #                 logger.error(f"  ✗ {self.motor_names[i]} failed after {MAX_RETRIES} attempts")
+
+        #     if not connected:
+        #         # This motor completely failed
+        #         logger.error(f"Could not connect to {self.motor_names[i]}")
+
+        # # Check if ALL motors connected (your requirement)
+        # if len(self.connected_motors) < len(self.drivers):
+        #     failed_motors = [self.motor_names[i] for i in range(len(self.drivers))
+        #                     if i not in self.connected_motors]
+        #     logger.error(f"FATAL: Not all motors connected. Failed motors: {failed_motors}")
+        #     self._set_state(MotorState.ERROR)
+        #     if self._on_error:
+        #         self._on_error(f"Connection failed: {len(failed_motors)} motor(s) not connected")
+        #     return
+
+        # logger.info(f"✓ All {len(self.drivers)} motor(s) connected successfully")
+        
         # Connect to all motors
         for i, driver in enumerate(self.drivers):
             try:
@@ -198,16 +263,41 @@ class MotorController:
                 logger.info(f"  {self.motor_names[i]} (slave_id={driver.slave_id}) connected")
             except Exception as e:
                 logger.error(f"  Failed to connect {self.motor_names[i]}: {e}")
-                self._set_state(MotorState.ERROR)
-                if self._on_error:
-                    self._on_error(f"Connection failed: {e}")
-                return
+                # self._set_state(MotorState.ERROR)
+                # if self._on_error:
+                #     self._on_error(f"Connection failed: {e}")
+                # return
             
+        # Stop motors first (driver might be in unknown state on cold boot)
+        logger.info("Stopping motors before clearing alarms...")
+        for driver in self.drivers:
+            try:
+                driver.stop()
+            except Exception as e:
+                logger.warning(f"  Failed to stop: {e}")
+        await asyncio.sleep(0.3)
+
         # Clear alarms first (like reset does)
         logger.info("Clearing alarms before homing...")
         for driver in self.drivers:
-            driver.clear_alarm()
+            try:
+                driver.clear_alarm()
+            except Exception as e:
+                logger.warning(f"  Failed to clear alarm: {e}")
         await asyncio.sleep(0.3)
+
+        # Verify all motors are communicating
+        for i, driver in enumerate(self.drivers):
+            try:
+                driver.is_ready()  # Test read
+                logger.info(f"  {self.motor_names[i]}: communication verified")
+            except Exception as e:
+                logger.error(f"  {self.motor_names[i]}: communication failed after alarm clear: {e}")
+                self._set_state(MotorState.ERROR)
+                if self._on_error:
+                    self._on_error(f"Connection failed: {e}")
+                return  # Give up, let sequence_manager send /reset
+
 
         # Check if motors need homing
         if self.homing_required:
