@@ -286,18 +286,63 @@ class MotorController:
                 logger.warning(f"  Failed to clear alarm: {e}")
         await asyncio.sleep(0.3)
 
+        # # Verify all motors are communicating
+        # for i, driver in enumerate(self.drivers):
+        #     try:
+        #         driver.is_ready()  # Test read
+        #         logger.info(f"  {self.motor_names[i]}: communication verified")
+        #     except Exception as e:
+        #         logger.error(f"  {self.motor_names[i]}: communication failed after alarm clear: {e}")
+        #         self._set_state(MotorState.ERROR)
+        #         if self._on_error:
+        #             self._on_error(f"Connection failed: {e}")
+        #         return  # Give up, let sequence_manager send /reset
+
         # Verify all motors are communicating
         for i, driver in enumerate(self.drivers):
             try:
-                driver.is_ready()  # Test read
-                logger.info(f"  {self.motor_names[i]}: communication verified")
+                ready_status = driver.is_ready()
+                alarm_status = driver.get_alarm_status()
+
+                # Read alarm code if alarm present
+                if alarm_status:
+                    from drivers.cvd_define import MonitorCommand, InfomationCode
+                    try:
+                        # Read alarm code directly using driver's client
+                        alarm_code = driver.client.read_monitor(
+                            MonitorCommand.PRESENT_ALARM,
+                            slave_id=driver.slave_id
+                        )
+                        if alarm_code:
+                            alarm_message = InfomationCode.get_alarm_message(alarm_code)
+                            logger.error(f"  {self.motor_names[i]}: ALARM detected - {alarm_message} (code: 0x{alarm_code:08X})")
+                        else:
+                            logger.error(f"  {self.motor_names[i]}: ALARM detected but failed to read alarm code")
+                    except Exception as alarm_err:
+                        logger.error(f"  {self.motor_names[i]}: ALARM detected but failed to read code: {alarm_err}")
+                else:
+                    logger.info(f"  {self.motor_names[i]}: communication verified (READY={ready_status})")
+
             except Exception as e:
-                logger.error(f"  {self.motor_names[i]}: communication failed after alarm clear: {e}")
+                logger.error(f"  {self.motor_names[i]}: communication failed: {e}")
+
+                # Try to read alarm code even if communication partially failed
+                try:
+                    from drivers.cvd_define import MonitorCommand, InfomationCode
+                    alarm_code = driver.client.read_monitor(
+                        MonitorCommand.PRESENT_ALARM,
+                        slave_id=driver.slave_id
+                    )
+                    if alarm_code:
+                        alarm_message = InfomationCode.get_alarm_message(alarm_code)
+                        logger.error(f"  {self.motor_names[i]}: Alarm code: {alarm_message} (0x{alarm_code:08X})")
+                except Exception as alarm_err:
+                    logger.warning(f"  {self.motor_names[i]}: Could not read alarm code: {alarm_err}")
+
                 self._set_state(MotorState.ERROR)
                 if self._on_error:
                     self._on_error(f"Connection failed: {e}")
-                return  # Give up, let sequence_manager send /reset
-
+                return
 
         # Check if motors need homing
         if self.homing_required:
