@@ -10,11 +10,14 @@ Usage:
     python deploy.py status      - 各Piで main.py が実行中か確認
     python deploy.py logs        - すべてのPiの最新ログを表示
     python deploy.py logs 05     - Pi-05 のログをリアルタイムで表示
+    python deploy.py logs 05 full - Pi-05 の全ログを表示
+    python deploy.py logs 05 download - Pi-05 のログをローカルにダウンロード
     python deploy.py shutdown    - すべてのPiをシャットダウン
     python deploy.py reboot      - すべてのPiを再起動
     python deploy.py enablerom   - すべてのPiでROMを有効化
     python deploy.py disablerom  - すべてのPiでROMを無効化
     python deploy.py checkrom    - すべてのPiのROMの状態を確認
+    python deploy.py checkwifi   - すべてのPiのWiFi/ネットワーク状態を確認
     python deploy.py v           - Toggle start/stop (simulates V key on Pi-02)
     python deploy.py reset       - Reset all stations (simulates Ctrl+V on Pi-02)
     python deploy.py diff        - ローカルとリモートのファイルを比較（チェックサムベース）
@@ -26,6 +29,8 @@ Network Mode:
 Examples:
     python deploy.py --vpn status              # ローカルネットワーク経由
     python deploy.py --vpn logs 02
+    python deploy.py --vpn logs 02 full        # Pi-02の全ログを表示
+    python deploy.py --vpn logs 02 download    # Pi-02のログをローカルにダウンロード
     python deploy.py --vpn stop
     python deploy.py --vpn status              # Tailscale VPN経由
     python deploy.py --vpn deploy              # VPN経由でデプロイ
@@ -36,6 +41,7 @@ Examples:
     python deploy.py --vpn diff --verbose      # ファイルの差分を詳細表示
     python deploy.py --vpn disablerom
     python deploy.py --vpn checkrom
+    python deploy.py --vpn checkwifi           # WiFi/ネットワーク状態を確認
     python deploy.py --vpn enablerom 
     python deploy.py --vpn reboot
 
@@ -196,6 +202,38 @@ def logs_follow(pi_number):
     cmd = ["sshpass", "-p", PASSWORD, "ssh", f"{USER}@{host}", f"tail -f /tmp/main_{pi_number}.log"]
     subprocess.run(cmd)
 
+def logs_full(pi_number):
+    """Show full log from a specific Pi."""
+    host = get_host(pi_number)
+    print(f"=== Full log from Pi-{pi_number} ({NETWORK_MODE.upper()} mode) ===\n")
+    result = run_ssh(host, f"cat /tmp/main_{pi_number}.log 2>/dev/null || echo 'No log file found'")
+    print(result.stdout.decode() if result.stdout else "No output")
+
+def logs_download(pi_number, local_filename=None):
+    """Download full log from a specific Pi to local file."""
+    host = get_host(pi_number)
+    if local_filename is None:
+        local_filename = f"logs/main_{pi_number}.log"
+
+    # Create logs directory if it doesn't exist
+    log_dir = os.path.dirname(local_filename) if os.path.dirname(local_filename) else "logs"
+    os.makedirs(log_dir, exist_ok=True)
+
+    print(f"=== Downloading log from Pi-{pi_number} ({NETWORK_MODE.upper()} mode) ===")
+    cmd = ["sshpass", "-p", PASSWORD, "scp", f"{USER}@{host}:/tmp/main_{pi_number}.log", local_filename]
+    result = subprocess.run(cmd)
+
+    if result.returncode == 0:
+        print(f"✓ Log saved to: {local_filename}")
+        # Show file size and line count
+        if os.path.exists(local_filename):
+            size = os.path.getsize(local_filename)
+            with open(local_filename, 'r') as f:
+                lines = sum(1 for _ in f)
+            print(f"  Size: {size:,} bytes | Lines: {lines:,}")
+    else:
+        print(f"✗ Failed to download log")
+
 def deploy_files():
     """Deploy files only, no restart."""
     print(f"=== Deploying files ({NETWORK_MODE.upper()} mode) ===")
@@ -328,6 +366,32 @@ def check_rom():
         result = results[pi]
         output = result.stdout.decode().strip() if result.stdout else "unknown"
         print(f"Pi-{pi}: {output}")
+
+def check_wifi():
+    """Check WiFi/network status on all Pis in parallel."""
+    print(f"=== Checking network status on all Pis ({NETWORK_MODE.upper()} mode) ===\n")
+
+    # Build command dict for all Pis
+    commands = {
+        pi: "if ip addr show eth0 2>/dev/null | grep -q 'state UP'; then echo 'Interface: Ethernet (eth0)'; ip addr show eth0 | grep 'inet ' | awk '{print \"IP:\", $2}'; else echo 'Interface: WiFi (wlan0)'; iwgetid -r 2>/dev/null | xargs -I {} echo 'SSID: {}'; ip addr show wlan0 | grep 'inet ' | awk '{print \"IP:\", $2}'; fi"
+        for pi in PI_NUMBERS
+    }
+
+    # Execute in parallel
+    results = run_ssh_parallel(commands)
+
+    # Print results in order
+    for pi in PI_NUMBERS:
+        result = results[pi]
+        if result.returncode == 0 and result.stdout:
+            output = result.stdout.decode().strip()
+            interface = "Ethernet" if "Ethernet" in output else "WiFi"
+            color = Colors.GREEN if "Ethernet" in output else Colors.YELLOW
+            print(f"{color}Pi-{pi}:{Colors.RESET}")
+            for line in output.split('\n'):
+                print(f"  {line}")
+        else:
+            print(f"{Colors.RED}Pi-{pi}: Failed to get network info{Colors.RESET}")
 
 def send_key_v():
     """Send /key/v to Pi-02 (simulates V key - toggle start/stop)."""
@@ -572,10 +636,17 @@ if __name__ == "__main__":
         status()
     elif command == "logs":
         if len(args) >= 2:
-            # Follow specific Pi logs
-            logs_follow(args[1])
+            if len(args) >= 3 and args[2] == "full":
+                # Show full log: python deploy.py --vpn logs 02 full
+                logs_full(args[1])
+            elif len(args) >= 3 and args[2] == "download":
+                # Download log: python deploy.py --vpn logs 02 download
+                logs_download(args[1])
+            else:
+                # Follow specific Pi logs: python deploy.py --vpn logs 02
+                logs_follow(args[1])
         else:
-            # Show all logs
+            # Show all logs (last 20 lines)
             logs()
     elif command == "shutdown":
         shutdown_all()
@@ -587,6 +658,8 @@ if __name__ == "__main__":
         disable_rom()
     elif command == "checkrom":
         check_rom()
+    elif command == "checkwifi":
+        check_wifi()
     elif command == "v":
         send_key_v()
     elif command == "reset":

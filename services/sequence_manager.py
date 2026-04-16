@@ -415,22 +415,22 @@ class SequenceManager:
             # Periodically check for stations stuck in "unknown" state
             if time.time() - last_unknown_check >= unknown_station_check_interval:
                 last_unknown_check = time.time()
-                self._check_unknown_stations()
+                self._check_problem_stations()
 
-    def _check_unknown_stations(self):
-        """Check for stations that remain 'unknown' and send reset"""
+    def _check_problem_stations(self):
+        """Check for stations that remain 'unknown' or 'error' and send reset"""
         for station_id, state in self.station_states.items():
-            if state == "unknown":
+            if state in ["unknown", "error"]:
                 # Track when this station was first detected as unknown
                 if station_id not in self.error_state_times:
                     # Just discovered it's still unknown, start timer
                     self.error_state_times[station_id] = time.time()
-                    logger.warning(f"Station {station_id} still UNKNOWN - will send /reset after {self.error_reset_delay_sec}s")
+                    logger.warning(f"Station {station_id} still UNKNOWN/ERROR - will send /reset after {self.error_reset_delay_sec}s")
                 else:
                     # Check if enough time has elapsed
                     elapsed = time.time() - self.error_state_times[station_id]
                     if elapsed >= self.error_reset_delay_sec:
-                        logger.warning(f"Station {station_id} still UNKNOWN after {elapsed:.1f}s - sending /reset")
+                        logger.warning(f"Station {station_id} still UNKNOWN/ERROR after {elapsed:.1f}s - sending /reset")
                         self._send_to_station(station_id, "/reset")
                         # Reset timer to avoid spamming
                         self.error_state_times[station_id] = time.time()

@@ -657,8 +657,9 @@ class MotorController:
                 if self.is_looping:
                     await self._loop_next_cycle()
                 return
-
-            if elapsed > 60000:
+            
+            # 16.6h x 100 = 69days
+            if elapsed > 6000000:
                 logger.error("Operation timeout")
                 self._set_state(MotorState.ERROR)
                 return
